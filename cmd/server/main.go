@@ -36,6 +36,8 @@ func main() {
 	// NEW: Shopify orders/create webhook
 	mux.HandleFunc("/webhooks/shopify/orders-create", internal.ShopifyOrderCreateHandler(db))
 
+	mux.HandleFunc("/green/ipn", internal.GreenIPNHandler(db))
+
 	addr := ":8081" // or :8080 if it's free again
 	log.Printf("Starting server on %s\n", addr)
 	if err := http.ListenAndServe(addr, mux); err != nil {

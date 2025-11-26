@@ -46,3 +46,32 @@ func ShopifyOrderCreateHandler(db *sql.DB) http.HandlerFunc {
 		w.Write([]byte("stored"))
 	}
 }
+
+// GreenIPNHandler handles the Green Money Instant Payment Notification.
+// Example request Green will send:
+//
+//	GET /green/ipn?ChkID=123&TransID=456
+func GreenIPNHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		chkID := r.URL.Query().Get("ChkID")
+		transID := r.URL.Query().Get("TransID")
+
+		if chkID == "" {
+			http.Error(w, "missing ChkID", http.StatusBadRequest)
+			return
+		}
+
+		log.Printf("Green IPN received: ChkID=%s TransID=%s", chkID, transID)
+
+		// For POC, we assume the payment is cleared. Later we'll call Green API.
+		if err := MarkPaymentCleared(db, chkID); err != nil {
+			log.Printf("Green IPN update error: %v", err)
+			http.Error(w, "update failed", http.StatusInternalServerError)
+			return
+		}
+
+		log.Printf("Green IPN: marked CHK %s as cleared", chkID)
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok"))
+	}
+}

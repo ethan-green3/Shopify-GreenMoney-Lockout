@@ -77,3 +77,31 @@ func InsertGreenPayment(db *sql.DB, order ShopifyOrder) error {
 
 	return nil
 }
+
+// MarkPaymentCleared updates the green_payments row to 'cleared' status
+// based on the green_check_id from Green (ChkID).
+func MarkPaymentCleared(db *sql.DB, chkID string) error {
+	query := `
+		UPDATE green_payments
+		SET 
+			current_status = $1,
+			is_cleared = TRUE,
+			shopify_marked_paid_at = NOW(),
+			updated_at = NOW(),
+			last_status_at = NOW()
+		WHERE green_check_id = $2
+	`
+
+	res, err := db.Exec(query, StatusCleared, chkID)
+	if err != nil {
+		return fmt.Errorf("update green_payment: %w", err)
+	}
+
+	// Optional: sanity check that a row was updated.
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("no payment found with green_check_id=%s", chkID)
+	}
+
+	return nil
+}
