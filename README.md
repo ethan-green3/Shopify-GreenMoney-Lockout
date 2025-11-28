@@ -68,7 +68,7 @@ The server:
 ### **3. Server calls `OneTimeInvoice`**
 Using the customer/order details, the service calls:
 
-POST https://cpsandbox.com/echeck.asmx/OneTimeInvoice
+POST https://cpsandbox.com/echeck.asmx/OneTimeInvoice (Testing endpoint)
 
 
 Green Money generates an invoice and **emails it to the customer**.
@@ -138,7 +138,7 @@ Then the server:
 - Sets `rejected_at = NOW()`
 - Excludes the row from future polling  
 
-Staff can manually review and follow up with the customer.
+Staff can manually review and follow up with the customer. Plans to automate this are in the workings.
 
 ---
 
