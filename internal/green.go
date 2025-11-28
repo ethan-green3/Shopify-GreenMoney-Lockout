@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -23,7 +24,7 @@ type GreenClient struct {
 func NewGreenClientFromEnv() *GreenClient {
 	baseURL := os.Getenv("GREEN_BASE_URL")
 	if baseURL == "" {
-		baseURL = "https://cpsandbox.com"
+		log.Fatal("Green URL not configured in")
 	}
 
 	return &GreenClient{

@@ -161,7 +161,6 @@ func (c *GreenClient) AllNotifications(ctx context.Context) (*AllNotificationsRe
 }
 
 // ClearNotification marks a single notification as deleted so it won't return on subsequent
-// UnseenNotifications calls (or daily emails / portal logins).
 func (c *GreenClient) ClearNotification(ctx context.Context, notificationID int64) (*ClearNotificationResult, error) {
 	if c.HTTPClient == nil {
 		c.HTTPClient = &http.Client{Timeout: 10 * time.Second}

@@ -107,7 +107,17 @@ func pollOnce(ctx context.Context, db *sql.DB, green *GreenClient, shopify *Shop
 		if rejected {
 			log.Printf("Green poller: payment id=%d (order %s) is rejected; consider marking status 'rejected' locally",
 				p.ID, p.ShopifyOrderName)
-			// Optional: add a 'rejected' status in your DB.
+			_, err := db.Exec(`
+        	UPDATE green_payments
+        	SET current_status = 'rejected',
+            	rejected_at = NOW(),
+            	updated_at = NOW(),
+            	last_status_at = NOW()
+       		WHERE green_check_id = $1
+   			`, p.GreenCheckID)
+			if err != nil {
+				log.Printf("Green poller: failed to mark rejected payment for Check_ID=%s: %v", p.GreenCheckID, err)
+			}
 			continue
 		}
 
@@ -131,6 +141,7 @@ func pollOnce(ctx context.Context, db *sql.DB, green *GreenClient, shopify *Shop
 		}
 		log.Printf("Green poller: payment id=%d (Check_ID=%s) marked cleared", p.ID, p.GreenCheckID)
 	}
+	fmt.Println("-----------------------------")
 
 	return nil
 }

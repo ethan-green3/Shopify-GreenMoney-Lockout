@@ -13,6 +13,7 @@ const (
 	StatusInvoiceSent    = "invoice_sent"
 	StatusInvoiceError   = "invoice_error"
 	StatusCleared        = "cleared"
+	StatusRejected       = "rejected"
 )
 
 // GreenPayment matches the green_payments table structure (simplified for now).
@@ -190,6 +191,7 @@ func ListPendingInvoicePayments(db *sql.DB) ([]GreenPayment, error) {
 		FROM green_payments
 		WHERE current_status = $1
 		  AND is_cleared = FALSE
+		  AND shopify_marked_paid_at IS NULL
 	`
 
 	rows, err := db.Query(query, StatusInvoiceSent)
@@ -248,4 +250,24 @@ func SetCheckIDForInvoice(db *sql.DB, invoiceID, checkID string) error {
 		return fmt.Errorf("no green_payments row found for invoice_id=%s", invoiceID)
 	}
 	return err
+}
+
+func MarkPaymentRejected(db *sql.DB, checkID string) error {
+	query := `
+        UPDATE green_payments
+        SET current_status = $1,
+            is_cleared = FALSE,
+            rejected_at = NOW(),
+            updated_at = NOW(),
+            last_status_at = NOW()
+        WHERE green_check_id = $2
+    `
+	res, err := db.Exec(query, StatusRejected, checkID)
+	if err != nil {
+		return fmt.Errorf("mark payment rejected for Check_ID=%s: %w", checkID, err)
+	}
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		return fmt.Errorf("no green_payments row found for Check_ID=%s", checkID)
+	}
+	return nil
 }
