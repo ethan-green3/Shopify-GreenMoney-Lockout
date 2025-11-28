@@ -165,7 +165,7 @@ Staff can manually review and follow up with the customer.
 
 ---
 
-## 🧠 Poller Logic Summary
+## Poller Logic Summary
 
 Runs every X minutes:
 
