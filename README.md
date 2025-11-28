@@ -52,7 +52,7 @@ The customer checks out normally on Shopify and selects **Green Money** as the p
 ---
 
 ### **2. Shopify triggers the webhook**
-Shopify sends an `orders/create` webhook payload to your Go service.
+Shopify sends an `orders/create` webhook payload to the Go service.
 
 The server:
 
