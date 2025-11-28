@@ -1,7 +1,7 @@
 # Shopify–Green Money Integration  
 ### Payment Processing Pipeline (Go + PostgreSQL + Shopify + Green Money)
 
-This project implements a **custom ACH payment integration** between Shopify and Green Money for Lockout Supplements.  
+This project implements a **custom eDebit payment integration** between Shopify and Green Money for Lockout Supplements.  
 Because Green Money is *not* a Shopify-approved payment provider, all logic is handled manually through:
 
 - Shopify webhooks  
