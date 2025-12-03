@@ -17,7 +17,7 @@ type GreenClient struct {
 	BaseURL     string       // e.g. "https://cpsandbox.com"
 	ClientID    string       // GREEN_CLIENT_ID
 	APIPassword string       // GREEN_API_PASSWORD
-	HTTPClient  *http.Client // optional; we'll default if nil
+	HTTPClient  *http.Client // optional; default if nil
 }
 
 // NewGreenClientFromEnv builds a GreenClient using env vars.

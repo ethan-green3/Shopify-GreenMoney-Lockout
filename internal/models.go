@@ -9,11 +9,12 @@ import (
 
 // Status constants for green_payments.current_status.
 const (
-	StatusPendingInvoice = "pending_invoice"
-	StatusInvoiceSent    = "invoice_sent"
-	StatusInvoiceError   = "invoice_error"
-	StatusCleared        = "cleared"
-	StatusRejected       = "rejected"
+	StatusPendingInvoice      = "pending_invoice"
+	StatusInvoiceSent         = "invoice_sent"
+	StatusInvoiceError        = "invoice_error"
+	StatusCleared             = "cleared"
+	StatusRejected            = "rejected"
+	StatusProcessedPendingLag = "processed_pending_lag"
 )
 
 // GreenPayment matches the green_payments table structure (simplified for now).
@@ -33,6 +34,7 @@ type GreenPayment struct {
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
 	LastStatusAt        time.Time
+	ProcessedAt         *time.Time
 }
 
 // InsertPendingPayment inserts a new row into green_payments with status "pending_invoice"
@@ -110,7 +112,8 @@ func GetPaymentByCheckID(db *sql.DB, chkID string) (*GreenPayment, error) {
 			shopify_marked_paid_at,
 			created_at,
 			updated_at,
-			last_status_at
+			last_status_at,
+			processed_at
 		FROM green_payments
 		WHERE green_check_id = $1
 	`
@@ -172,63 +175,59 @@ func MarkPaymentCleared(db *sql.DB, chkID string) error {
 
 // ListPendingInvoicePayments returns all rows that are in 'invoice_sent' status
 // and not yet cleared. These are the ones the poller should check with Green.
-func ListPendingInvoicePayments(db *sql.DB) ([]GreenPayment, error) {
-	query := `
+func ListPendingInvoicePayments(db *sql.DB) ([]*GreenPayment, error) {
+	rows, err := db.Query(`
 		SELECT
 			id,
 			shopify_order_id,
 			shopify_order_name,
-			amount,
-			currency,
 			invoice_id,
 			green_check_id,
+			amount,
+			currency,
 			current_status,
 			is_cleared,
+			last_status_at,
 			shopify_marked_paid_at,
-			created_at,
-			updated_at,
-			last_status_at
+			processed_at
 		FROM green_payments
-		WHERE current_status = $1
+		WHERE current_status IN ('invoice_sent', 'processed_pending_lag')
 		  AND is_cleared = FALSE
 		  AND shopify_marked_paid_at IS NULL
-	`
-
-	rows, err := db.Query(query, StatusInvoiceSent)
+	`)
 	if err != nil {
 		return nil, fmt.Errorf("query pending invoices: %w", err)
 	}
 	defer rows.Close()
 
-	var result []GreenPayment
-
+	var payments []*GreenPayment
 	for rows.Next() {
-		var gp GreenPayment
-		if err := rows.Scan(
-			&gp.ID,
-			&gp.ShopifyOrderID,
-			&gp.ShopifyOrderName,
-			&gp.Amount,
-			&gp.Currency,
-			&gp.InvoiceID,
-			&gp.GreenCheckID,
-			&gp.CurrentStatus,
-			&gp.IsCleared,
-			&gp.ShopifyMarkedPaidAt,
-			&gp.CreatedAt,
-			&gp.UpdatedAt,
-			&gp.LastStatusAt,
-		); err != nil {
+		var p GreenPayment
+		err := rows.Scan(
+			&p.ID,
+			&p.ShopifyOrderID,
+			&p.ShopifyOrderName,
+			&p.InvoiceID,
+			&p.GreenCheckID,
+			&p.Amount,
+			&p.Currency,
+			&p.CurrentStatus,
+			&p.IsCleared,
+			&p.LastStatusAt,
+			&p.ShopifyMarkedPaidAt,
+			&p.ProcessedAt,
+		)
+		if err != nil {
 			return nil, fmt.Errorf("scan pending invoice: %w", err)
 		}
-		result = append(result, gp)
+		payments = append(payments, &p)
 	}
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("rows error: %w", err)
 	}
 
-	return result, nil
+	return payments, nil
 }
 
 // SetCheckIDForInvoice updates green_check_id for a given Invoice_ID.

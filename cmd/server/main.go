@@ -28,19 +28,15 @@ func main() {
 
 	log.Println("Connected to database")
 
-	shopifyStoreDomain := os.Getenv("SHOPIFY_STORE_DOMAIN")
-	shopifyAccessToken := os.Getenv("SHOPIFY_ACCESS_TOKEN")
-	shopifyAPIVersion := "2024-10"
-
-	if shopifyStoreDomain == "" || shopifyAccessToken == "" {
+	if os.Getenv("SHOPIFY_STORE_DOMAIN") == "" || os.Getenv("SHOPIFY_ACCESS_TOKEN") == "" {
 		log.Fatal("WARNING: SHOPIFY_STORE_DOMAIN or SHOPIFY_ACCESS_TOKEN not set; Shopify calls will fail")
 	}
 
-	shopifyClient := internal.NewShopifyClient(shopifyStoreDomain, shopifyAccessToken, shopifyAPIVersion)
+	shopifyClient := internal.NewShopifyClient(os.Getenv("SHOPIFY_STORE_DOMAIN"), os.Getenv("SHOPIFY_ACCESS_TOKEN"), os.Getenv("SHOPIFY_API_VERSION"))
 	greenClient := internal.NewGreenClientFromEnv()
 
 	ctx := context.Background()
-	internal.StartGreenPoller(ctx, db, greenClient, shopifyClient, 1800*time.Second)
+	internal.StartGreenPoller(ctx, db, greenClient, shopifyClient, 1*time.Minute)
 
 	mux := http.NewServeMux()
 
