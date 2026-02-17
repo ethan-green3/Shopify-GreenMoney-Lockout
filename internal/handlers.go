@@ -1,9 +1,11 @@
 package internal
 
 import (
+	"Shopify-GreenMoney-Lockout/internal/moneyeu"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -11,7 +13,7 @@ import (
 
 // ShopifyOrderCreateHandler handles the Shopify orders/create webhook,
 // inserts a pending row into green_payments, and calls Green OneTimeInvoice.
-func ShopifyOrderCreateHandler(db *sql.DB, green *GreenClient) http.HandlerFunc {
+func ShopifyOrderCreateHandler(db *sql.DB, green *GreenClient, moneySvc *moneyeu.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -20,65 +22,98 @@ func ShopifyOrderCreateHandler(db *sql.DB, green *GreenClient) http.HandlerFunc 
 
 		defer r.Body.Close()
 
+		raw, err := io.ReadAll(r.Body)
+
+		if err != nil {
+			log.Printf("Shopify webhook: read body error: %v", err)
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+
 		var order ShopifyOrder
-		if err := json.NewDecoder(r.Body).Decode(&order); err != nil {
+		if err := json.Unmarshal(raw, &order); err != nil {
 			log.Printf("Shopify webhook: decode error: %v", err)
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
 
 		// If it's not a Green Money order, just ignore it.
-		if !IsGreenMoneyOrder(order) {
+		if IsGreenMoneyOrder(order) {
 			log.Printf("Shopify webhook: non-Green payment for order %s, ignoring", order.Name)
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte("ignored"))
-			return
-		}
 
-		// 1) Insert a pending payment row.
-		paymentID, err := InsertPendingPayment(db, order)
-		if err != nil {
-			log.Printf("Shopify webhook: insert pending payment error: %v", err)
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
-		log.Printf("Shopify webhook: inserted pending green_payment id=%d for order %s", paymentID, order.Name)
-
-		// 2) Call Green OneTimeInvoice to send the invoice to the customer.
-		if green == nil || green.ClientID == "" || green.APIPassword == "" {
-			log.Printf("Shopify webhook: Green client not configured; skipping invoice creation")
-			// Mark as invoice error so you know to fix config.
-			if err := UpdatePaymentAfterInvoice(db, paymentID, "", "", StatusInvoiceError); err != nil {
-				log.Printf("UpdatePaymentAfterInvoice error (no green config): %v", err)
+			// 1) Insert a pending payment row.
+			paymentID, err := InsertPendingPayment(db, order)
+			if err != nil {
+				log.Printf("Shopify webhook: insert pending payment error: %v", err)
+				http.Error(w, "internal error", http.StatusInternalServerError)
+				return
 			}
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("green_not_configured"))
-			return
-		}
+			log.Printf("Shopify webhook: inserted pending green_payment id=%d for order %s", paymentID, order.Name)
 
-		invResult, err := green.CreateInvoice(r.Context(), order)
-		if err != nil {
-			log.Printf("Shopify webhook: Green CreateInvoice error: %v", err)
-			if err := UpdatePaymentAfterInvoice(db, paymentID, "", "", StatusInvoiceError); err != nil {
-				log.Printf("UpdatePaymentAfterInvoice error (invoice_error): %v", err)
+			// 2) Call Green OneTimeInvoice to send the invoice to the customer.
+			if green == nil || green.ClientID == "" || green.APIPassword == "" {
+				log.Printf("Shopify webhook: Green client not configured; skipping invoice creation")
+				// Mark as invoice error so you know to fix config.
+				if err := UpdatePaymentAfterInvoice(db, paymentID, "", "", StatusInvoiceError); err != nil {
+					log.Printf("UpdatePaymentAfterInvoice error (no green config): %v", err)
+				}
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte("green_not_configured"))
+				return
 			}
+
+			invResult, err := green.CreateInvoice(r.Context(), order)
+			if err != nil {
+				log.Printf("Shopify webhook: Green CreateInvoice error: %v", err)
+				if err := UpdatePaymentAfterInvoice(db, paymentID, "", "", StatusInvoiceError); err != nil {
+					log.Printf("UpdatePaymentAfterInvoice error (invoice_error): %v", err)
+				}
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte("invoice_error"))
+				return
+			}
+
+			log.Printf("Shopify webhook: Green invoice created: Invoice_ID=%s Check_ID=%s", invResult.InvoiceID, invResult.CheckID)
+
+			// 3) Update DB with Invoice_ID and Check_ID, mark as invoice_sent.
+			if err := UpdatePaymentAfterInvoice(db, paymentID, invResult.InvoiceID, invResult.CheckID, StatusInvoiceSent); err != nil {
+				log.Printf("UpdatePaymentAfterInvoice error (invoice_sent): %v", err)
+				http.Error(w, "internal error", http.StatusInternalServerError)
+				return
+			}
+
+			log.Printf("Shopify webhook: stored Green invoice for order %s", order.Name)
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("invoice_error"))
+			w.Write([]byte("invoice_sent"))
+		}
+
+		// If MoneyEU, run MoneyEU path
+		if IsMoneyEUOrder(order) {
+			if moneySvc == nil { // depends how you wire it, see below
+				log.Printf("Shopify webhook: MoneyEU not configured; ignoring %s", order.Name)
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte("moneyeu_not_configured"))
+				return
+			}
+
+			if err := moneySvc.HandleShopifyOrderJSON(r.Context(), raw); err != nil {
+				log.Printf("Shopify webhook: MoneyEU error for %s: %v", order.Name, err)
+				// still return 200 so Shopify doesn't retry forever
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte("moneyeu_error"))
+				return
+			}
+
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("moneyeu_email_sent"))
 			return
 		}
 
-		log.Printf("Shopify webhook: Green invoice created: Invoice_ID=%s Check_ID=%s", invResult.InvoiceID, invResult.CheckID)
-
-		// 3) Update DB with Invoice_ID and Check_ID, mark as invoice_sent.
-		if err := UpdatePaymentAfterInvoice(db, paymentID, invResult.InvoiceID, invResult.CheckID, StatusInvoiceSent); err != nil {
-			log.Printf("UpdatePaymentAfterInvoice error (invoice_sent): %v", err)
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
-
-		log.Printf("Shopify webhook: stored Green invoice for order %s", order.Name)
+		log.Printf("Shopify webhook: non-Green payment for order %s, ignoring", order.Name)
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("invoice_sent"))
+		w.Write([]byte("ignored"))
 	}
 }
 

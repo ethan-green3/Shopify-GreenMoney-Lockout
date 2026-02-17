@@ -37,3 +37,12 @@ func IsGreenMoneyOrder(o ShopifyOrder) bool {
 	}
 	return false
 }
+
+func IsMoneyEUOrder(o ShopifyOrder) bool {
+	for _, name := range o.PaymentGatewayNames {
+		if name == "Credit/Debit Card" {
+			return true
+		}
+	}
+	return false
+}

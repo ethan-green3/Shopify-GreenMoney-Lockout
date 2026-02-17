@@ -57,7 +57,7 @@ func StartGreenPoller(ctx context.Context, db *sql.DB, green *GreenClient, shopi
 			case <-ticker.C:
 				now := time.Now()
 				if !shouldRunGreenPoll(now) {
-					log.Println("Green Poller: Not one of the 8:30/13:30/16:30 slots.")
+					// log.Println("Green Poller: Not one of the 8:30/13:30/16:30 slots.")
 					continue
 				}
 				if err := pollOnce(ctx, db, green, shopify); err != nil {
