@@ -54,8 +54,8 @@ func main() {
 	greenClient := internal.NewGreenClientFromEnv()
 	moneyClient := moneyeu.NewClient(
 		os.Getenv("MONEYEU_BASE_URL"),
-		os.Getenv("MONEYEU_SANDBOX_API_KEY"),
-		os.Getenv("MONEYEU_SANDBOX_SECRET"),
+		os.Getenv("MONEYEU_LIVE_API_KEY"),
+		os.Getenv("MONEYEU_LIVE_SECRET"),
 	)
 	moneySvc := &moneyeu.Service{
 		DB:     db,
@@ -79,6 +79,8 @@ func main() {
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintln(w, "ok")
 	})
+
+	mux.HandleFunc("/webhooks/moneyeu", moneyeu.MoneyEUWebhookHandler(db, shopifyClient))
 
 	mux.HandleFunc("/webhooks/shopify/orders-create", internal.ShopifyOrderCreateHandler(db, greenClient, moneySvc))
 

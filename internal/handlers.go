@@ -12,7 +12,8 @@ import (
 )
 
 // ShopifyOrderCreateHandler handles the Shopify orders/create webhook,
-// inserts a pending row into green_payments, and calls Green OneTimeInvoice.
+// it will decide if the order is a GreenMoney or MoneyEU order and take the corresponding path
+// if it is neither, it simply ignores
 func ShopifyOrderCreateHandler(db *sql.DB, green *GreenClient, moneySvc *moneyeu.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -111,7 +112,7 @@ func ShopifyOrderCreateHandler(db *sql.DB, green *GreenClient, moneySvc *moneyeu
 			return
 		}
 
-		log.Printf("Shopify webhook: non-Green payment for order %s, ignoring", order.Name)
+		log.Printf("Shopify webhook: non-Green/MoneyEU payment for order %s, ignoring", order.Name)
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ignored"))
 	}

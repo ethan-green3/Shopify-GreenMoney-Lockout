@@ -75,10 +75,12 @@ func (s *Service) HandleShopifyOrderJSON(ctx context.Context, raw []byte) error 
 		country = addr.CountryCode
 		customerName = strings.TrimSpace(addr.FirstName + " " + addr.LastName)
 	}
+	// MoneyEU API Expectes United States, Shopify sends down US
 	if country == "US" {
 		country = "United States"
 	}
-
+	//*****COMMENT THIS OUT FOR PRODUCTION************
+	//o.Currency = "EUR"
 	// 1) Insert DB row first
 	paymentID, err := InsertMoneyEUPayment(s.DB, PaymentRow{
 		ShopifyOrderID:   strconv.FormatInt(o.ID, 10),
@@ -131,23 +133,26 @@ func (s *Service) HandleShopifyOrderJSON(ctx context.Context, raw []byte) error 
 	}
 
 	// 3) Email checkout link
-	subject := fmt.Sprintf("Complete your payment for Order %s", o.Name)
-	body := fmt.Sprintf(
-		"Hi,\n\nThanks for your order with Lockout Supplements (%s).\n\n"+
-			"To complete payment, use the secure checkout link below:\n%s\n\n"+
-			"Amount due: %.2f %s\n\n"+
-			"If you have any issues, reply to this email and we’ll help.\n\n"+
-			"— Lockout Supplements\n",
-		o.Name, checkoutURL, amount, o.Currency,
-	)
+	/*
+		subject := fmt.Sprintf("Complete your payment for Order %s", o.Name)
+		body := fmt.Sprintf(
+			"Hi,\n\nThanks for your order with Lockout Supplements (%s).\n\n"+
+				"To complete payment, use the secure checkout link below:\n%s\n\n"+
+				"Amount due: %.2f %s\n\n"+
+				"If you have any issues, reply to this email and we’ll help.\n\n"+
+				"— Lockout Supplements\n",
+			o.Name, checkoutURL, amount, o.Currency,
+		)
 
-	if err := email.Send(s.SMTP, o.Email, subject, body); err != nil {
-		_ = MarkEmailFailed(s.DB, paymentID, err.Error())
-		return fmt.Errorf("email send: %w", err)
-	}
-	_ = MarkEmailSent(s.DB, paymentID)
+		if err := email.Send(s.SMTP, o.Email, subject, body); err != nil {
+			_ = MarkEmailFailed(s.DB, paymentID, err.Error())
+			return fmt.Errorf("email send: %w", err)
+		}
+		_ = MarkEmailSent(s.DB, paymentID)
 
-	log.Printf("MoneyEU: emailed checkout link for order %s", o.Name)
+		log.Printf("MoneyEU: emailed checkout link for order %s", o.Name)
+		return nil
+	*/
 	return nil
 }
 

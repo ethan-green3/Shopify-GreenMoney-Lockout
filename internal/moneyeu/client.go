@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -54,7 +53,7 @@ func (c *Client) CreateOrderExt(ctx context.Context, req CreateOrderExtRequest) 
 		return nil, fmt.Errorf("marshal createOrderExt: %w", err)
 	}
 	bodyStr := string(bodyBytes)
-
+	//log.Println("Body string:", bodyStr)
 	// Generate a per-request random salt (recommended)
 	salt, err := randomSaltHex(16) // 32 hex chars
 	if err != nil {
@@ -74,13 +73,19 @@ func (c *Client) CreateOrderExt(ctx context.Context, req CreateOrderExtRequest) 
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "application/json")
-
-	// Required auth headers
+	httpReq.Header.Set("accept", "*/*") // they show */* in docs
 	httpReq.Header.Set("apiKey", c.APIKey)
 	httpReq.Header.Set("salt", salt)
 	httpReq.Header.Set("timestamp", timestamp)
 	httpReq.Header.Set("signature", sig)
+	//log.Printf("MoneyEU request: %s %s", httpReq.Method, httpReq.URL.String())
+	//log.Printf("MoneyEU headers: apikey_set=%t salt=%q timestamp=%q signature_len=%s",
+	//	c.APIKey != "",
+	//	salt,
+	//	timestamp,
+	//	sig,
+	//	)
+	//log.Printf("MoneyEU body: %s", bodyStr)
 
 	resp, err := c.HTTP.Do(httpReq)
 
@@ -93,7 +98,7 @@ func (c *Client) CreateOrderExt(ctx context.Context, req CreateOrderExtRequest) 
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
-	log.Printf("MoneyEU HTTP status=%s content-type=%q len=%d", resp.Status, resp.Header.Get("Content-Type"), len(raw))
+	//log.Printf("MoneyEU HTTP status=%s content-type=%q len=%d", resp.Status, resp.Header.Get("Content-Type"), len(raw))
 	if len(raw) == 0 {
 		// Return a clearer error with status + key headers
 		return nil, fmt.Errorf("moneyEU empty response body: status=%s content-type=%q", resp.Status, resp.Header.Get("Content-Type"))
