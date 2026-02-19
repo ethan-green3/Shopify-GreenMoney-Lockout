@@ -75,11 +75,13 @@ func (s *Service) HandleShopifyOrderJSON(ctx context.Context, raw []byte) error 
 		country = addr.CountryCode
 		customerName = strings.TrimSpace(addr.FirstName + " " + addr.LastName)
 	}
-	// MoneyEU API Expectes X, Shopify sends down Y
+	// MoneyEU API Expectes X, Shopify sends down Y, update dial code for non North American orders as well
+	dialCode := "+1"
 	if country == "US" {
 		country = "United States"
 	}
 	if country == "SV" {
+		dialCode = "+503"
 		country = "El Salvador"
 	}
 	if country == "CA" {
@@ -108,7 +110,7 @@ func (s *Service) HandleShopifyOrderJSON(ctx context.Context, raw []byte) error 
 		Name:            fallback(customerName, "Customer"),
 		Mail:            o.Email,
 		PhoneNumber:     customerPhone,
-		DialCode:        "+1",
+		DialCode:        dialCode,
 		Address:         address1,
 		City:            city,
 		State:           state,
