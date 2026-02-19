@@ -95,8 +95,15 @@ func main() {
 		json.NewEncoder(w).Encode(res)
 	})
 	port := os.Getenv("PORT")
-	log.Printf("Starting server on %s\n", port)
-	if err := http.ListenAndServe(port, mux); err != nil {
+	if port == "" {
+		port = "8081" // local fallback
+	}
+
+	addr := ":" + port
+	log.Printf("Starting server on %s\n", addr)
+
+	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatalf("server error: %v", err)
 	}
+
 }
