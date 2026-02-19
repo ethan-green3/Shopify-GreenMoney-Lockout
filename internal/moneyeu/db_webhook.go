@@ -83,3 +83,16 @@ func MarkMoneyEUFailed(db *sql.DB, shopifyOrderID string, reason string) error {
     `, shopifyOrderID, reason)
 	return err
 }
+
+func HasCheckoutLinkForOrder(db *sql.DB, shopifyOrderID string) (bool, error) {
+	var exists bool
+	err := db.QueryRow(`
+		SELECT EXISTS (
+			SELECT 1
+			FROM money_eu_payments
+			WHERE shopify_order_id = $1
+			  AND COALESCE(NULLIF(checkout_url, ''), '') <> ''
+		)
+	`, shopifyOrderID).Scan(&exists)
+	return exists, err
+}

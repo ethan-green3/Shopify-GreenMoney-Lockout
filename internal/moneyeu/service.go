@@ -75,13 +75,15 @@ func (s *Service) HandleShopifyOrderJSON(ctx context.Context, raw []byte) error 
 		country = addr.CountryCode
 		customerName = strings.TrimSpace(addr.FirstName + " " + addr.LastName)
 	}
-	// MoneyEU API Expectes United States, Shopify sends down US
+	// MoneyEU API Expectes X, Shopify sends down Y
 	if country == "US" {
 		country = "United States"
 	}
-	// Edge case for El salvador payments
 	if country == "SV" {
 		country = "El Salvador"
+	}
+	if country == "CA" {
+		country = "Canada"
 	}
 	//*****COMMENT THIS OUT FOR PRODUCTION************
 	//o.Currency = "EUR"

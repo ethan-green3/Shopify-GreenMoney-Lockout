@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -92,16 +93,34 @@ func ShopifyOrderCreateHandler(db *sql.DB, green *GreenClient, moneySvc *moneyeu
 
 		// If MoneyEU, run MoneyEU path
 		if IsMoneyEUOrder(order) {
-			if moneySvc == nil { // depends how you wire it, see below
+
+			if moneySvc == nil {
 				log.Printf("Shopify webhook: MoneyEU not configured; ignoring %s", order.Name)
 				w.WriteHeader(http.StatusOK)
 				w.Write([]byte("moneyeu_not_configured"))
 				return
 			}
 
+			// 1) Idempotency check BEFORE calling MoneyEU
+			// If we already created a checkout link (or emailed it), do nothing.
+			already, err := moneyeu.HasCheckoutLinkForOrder(db, strconv.FormatInt(order.ID, 10))
+			if err != nil {
+				log.Printf("Shopify webhook: MoneyEU idempotency check error for %s: %v", order.Name, err)
+				// still 200 so Shopify doesn’t hammer you
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte("moneyeu_check_error"))
+				return
+			}
+			if already {
+				log.Printf("Shopify webhook: MoneyEU already created link for %s; skipping", order.Name)
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte("already_created"))
+				return
+			}
+
+			// 2) Do the slow work synchronously
 			if err := moneySvc.HandleShopifyOrderJSON(r.Context(), raw); err != nil {
 				log.Printf("Shopify webhook: MoneyEU error for %s: %v", order.Name, err)
-				// still return 200 so Shopify doesn't retry forever
 				w.WriteHeader(http.StatusOK)
 				w.Write([]byte("moneyeu_error"))
 				return
