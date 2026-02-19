@@ -79,6 +79,10 @@ func (s *Service) HandleShopifyOrderJSON(ctx context.Context, raw []byte) error 
 	if country == "US" {
 		country = "United States"
 	}
+	// Edge case for El salvador payments
+	if country == "SV" {
+		country = "El Salvador"
+	}
 	//*****COMMENT THIS OUT FOR PRODUCTION************
 	//o.Currency = "EUR"
 	// 1) Insert DB row first
