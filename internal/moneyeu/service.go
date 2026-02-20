@@ -135,6 +135,7 @@ func (s *Service) HandleShopifyOrderJSON(ctx context.Context, raw []byte) error 
 	if err != nil {
 		return fmt.Errorf("CreateOrderExt: parse content: %w", err)
 	}
+	log.Println("MoneyEU: CreateOrderExt response content:", c.ID, c.IdOrderExt, c.Url, c.Status)
 
 	moneyEUOrderID := fmt.Sprintf("%d", c.ID)
 	checkoutURL := c.Url
