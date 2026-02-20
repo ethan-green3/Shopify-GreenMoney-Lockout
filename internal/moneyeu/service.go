@@ -87,6 +87,10 @@ func (s *Service) HandleShopifyOrderJSON(ctx context.Context, raw []byte) error 
 	if country == "CA" {
 		country = "Canada"
 	}
+	if country == "CO" {
+		dialCode = "+57"
+		country = "Colombia"
+	}
 	//*****COMMENT THIS OUT FOR PRODUCTION************
 	//o.Currency = "EUR"
 	// 1) Insert DB row first
