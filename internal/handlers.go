@@ -41,10 +41,6 @@ func ShopifyOrderCreateHandler(db *sql.DB, green *GreenClient, moneySvc *moneyeu
 
 		// If it's not a Green Money order, just ignore it.
 		if IsGreenMoneyOrder(order) {
-			log.Printf("Shopify webhook: non-Green payment for order %s, ignoring", order.Name)
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("ignored"))
-
 			// 1) Insert a pending payment row.
 			paymentID, err := InsertPendingPayment(db, order)
 			if err != nil {
@@ -55,17 +51,6 @@ func ShopifyOrderCreateHandler(db *sql.DB, green *GreenClient, moneySvc *moneyeu
 			log.Printf("Shopify webhook: inserted pending green_payment id=%d for order %s", paymentID, order.Name)
 
 			// 2) Call Green OneTimeInvoice to send the invoice to the customer.
-			if green == nil || green.ClientID == "" || green.APIPassword == "" {
-				log.Printf("Shopify webhook: Green client not configured; skipping invoice creation")
-				// Mark as invoice error so you know to fix config.
-				if err := UpdatePaymentAfterInvoice(db, paymentID, "", "", StatusInvoiceError); err != nil {
-					log.Printf("UpdatePaymentAfterInvoice error (no green config): %v", err)
-				}
-				w.WriteHeader(http.StatusOK)
-				w.Write([]byte("green_not_configured"))
-				return
-			}
-
 			invResult, err := green.CreateInvoice(r.Context(), order)
 			if err != nil {
 				log.Printf("Shopify webhook: Green CreateInvoice error: %v", err)
