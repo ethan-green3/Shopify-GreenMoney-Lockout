@@ -74,6 +74,7 @@ func ShopifyOrderCreateHandler(db *sql.DB, green *GreenClient, moneySvc *moneyeu
 			log.Printf("Shopify webhook: stored Green invoice for order %s", order.Name)
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte("invoice_sent"))
+			return
 		}
 
 		// If MoneyEU, run MoneyEU path
