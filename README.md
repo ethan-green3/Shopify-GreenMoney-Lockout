@@ -1,196 +1,269 @@
-# Shopify–Green Money Integration  
-### Payment Processing Pipeline (Go + PostgreSQL + Shopify + Green Money)
+# Shopify Payment Orchestration Service  
+### Multi-Rail Payment Processing (Go + PostgreSQL + Shopify + Green Money + MoneyEU)
 
-This project implements a **custom eDebit payment integration** between Shopify and Green Money for Lockout Supplements.  
-Because Green Money is *not* a Shopify-approved payment provider, all logic is handled manually through:
+This project implements a custom payment orchestration layer between Shopify and multiple external payment processors.
+
+The system supports two distinct payment rails:
+
+- Green Money (ACH / eCheck)
+- MoneyEU (Hosted Credit/Debit Card Checkout)
+
+Because neither processor is natively integrated into Shopify’s checkout, all orchestration is handled through:
 
 - Shopify webhooks  
 - A Go backend service  
-- Green Money’s eDebit APIs  
-- A local PostgreSQL database  
-- A background poller to monitor ACH settlement  
+- External processor APIs  
+- PostgreSQL for state tracking  
+- Background settlement monitoring  
 
-This README explains the full architecture, data flow, endpoints, database model, and operational lifecycle.
+This README documents the architecture, processing flows, and lifecycle handling.
 
 ---
 
 ## Overview
 
-This service automates the complete process of handling Green Money eCheck payments for Shopify orders:
+This service automates the full lifecycle of external payment processing for Shopify orders:
 
-1. Detect Shopify orders using Green Money  
-2. Create a Green Money invoice via API  
-3. Email invoice to customer (Green sends automatically)  
-4. Track customer submission of bank information  
-5. Poll Green Money until the ACH debit clears  
-6. Mark the Shopify order as **Paid** once settled  
-7. Record all statuses in a local PostgreSQL database  
+1. Detect eligible Shopify orders  
+2. Route the order to the correct payment processor  
+3. Generate invoice or hosted checkout session  
+4. Track processor status updates (polling or webhook-driven)  
+5. Reconcile payment outcome  
+6. Mark Shopify order **Paid** when funds are confirmed  
+7. Persist full lifecycle state in PostgreSQL  
 
-This system ensures that orders are **only fulfilled once funds have fully settled**.
+### Guarantees
+
+- Idempotent processing  
+- No duplicate settlement  
+- Safe retry handling  
+- Event-driven reconciliation  
+- Explicit payment state transitions  
 
 ---
 
 ## System Architecture
 
-### Components
+### Core Components
 
 | Component | Purpose |
-|----------|---------|
-| **Shopify** | Customer checkout + order creation events |
-| **Go server** | API orchestration, polling, database operations |
-| **PostgreSQL** | Tracks invoices, Check_IDs, and statuses |
-| **Green Money API** | Generates invoices, runs ACH debits, exposes settlement status |
-| **Poller** | Background job to check ACH processing status |
+|------------|----------|
+| **Shopify** | Order creation + payment state |
+| **Go Service** | Webhook handling, API orchestration, state logic |
+| **PostgreSQL** | Persistent payment lifecycle tracking |
+| **Green Money API** | ACH invoice generation + settlement reporting |
+| **MoneyEU API** | Hosted card checkout + webhook-based confirmation |
+| **Green Poller** | Background job for ACH settlement monitoring |
 
 ---
 
-## End-to-End Workflow
-
-### **1. Customer places order using Green Money**
-The customer checks out normally on Shopify and selects **Green Money** as the payment method.
+# Payment Rails
 
 ---
 
-### **2. Shopify triggers the webhook**
-Shopify sends an `orders/create` webhook payload to the Go service.
+# Rail 1: Green Money (ACH / eCheck)
 
-The server:
+## Workflow
 
-- Reads the payment method  
-- If not Green Money → ignores the event  
-- If Green Money:  
-  - Extracts customer info  
-  - Extracts order amount + order ID  
-  - Inserts a row into `green_payments`  
+### 1. Customer selects Green Money at checkout
+
+Shopify creates an order using a manual payment method.
 
 ---
 
-### **3. Server calls `OneTimeInvoice`**
-Using the customer/order details, the service calls:
+### 2. Shopify triggers `orders/create`
 
-POST https://cpsandbox.com/echeck.asmx/OneTimeInvoice (Testing endpoint)
+The Go service:
 
+- Validates payment method  
+- Inserts a payment record  
+- Calls Green Money `OneTimeInvoice`  
+- Stores returned `Invoice_ID`  
 
-Green Money generates an invoice and **emails it to the customer**.
-
-`Invoice_ID` is stored in the database.
-
----
-
-### **4. Customer submits bank information**
-The customer receives the invoice by email and completes the payment form.
-
-Green Money then generates a **Check_ID** (debit).
+Green Money automatically emails the invoice to the customer.
 
 ---
 
-### **5. Poller matches Invoice_ID → Check_ID**
-Every X minutes the poller:
+### 3. Customer submits bank information
 
-1. Calls `InvoiceStatus(Invoice_ID)`  
-2. Stores the returned `Check_ID` in the DB  
-3. Associates Green Money’s debit with the Shopify order  
+Green generates a `Check_ID` once bank information is entered.
 
 ---
 
-### **6. Poller monitors ACH settlement via `CheckStatus`**
-For each known `Check_ID`, the poller calls:
+### 4. Poller resolves Invoice → Check_ID
 
-CheckStatus?Check_ID=xxxxxx
+The background poller:
 
+- Calls `InvoiceStatus`  
+- Stores `Check_ID`  
+- Associates debit with Shopify order  
 
-Interpretation:
+---
+
+### 5. Poller monitors settlement
+
+For each `Check_ID`, the poller calls `CheckStatus`.
 
 | Processed | Rejected | Meaning |
-|----------|----------|---------|
-| False | False | Pending batch (not yet settled) |
-| True | False | **Cleared — funds settled** |
-| Any | True | **Rejected — NSF or invalid bank info** |
+|------------|-----------|-----------|
+| False | False | Pending batch |
+| True | False | **Cleared** |
+| Any | True | **Rejected** |
 
 ---
 
-### **7. Mark Shopify order as Paid**
-When Green Money returns:
+### 6. Shopify marked Paid (ACH only after settlement)
 
-Processed = "True"
-Rejected = "False"
+When:
 
+Processed = True  
+Rejected = False  
 
-The server:
+The service:
 
-- Calls Shopify Admin API → marks order **Paid**
-- Updates DB:
-  - `current_status = 'cleared'`
-  - `is_cleared = true`
-  - `shopify_marked_paid_at = NOW()`
+- Calls Shopify Admin API  
+- Marks order as Paid  
+- Updates lifecycle state  
 
-Order is now ready for fulfillment.
+Orders are fulfilled only after ACH funds are fully settled.
 
 ---
 
-### **8. Rejected Payments**
-If:
-Rejected = "True"
+# Rail 2: MoneyEU (Hosted Credit/Debit Card)
 
-Then the server:
-
-- Marks `current_status = 'rejected'`
-- Sets `rejected_at = NOW()`
-- Excludes the row from future polling  
-
-Staff can manually review and follow up with the customer. Plans to automate this are in the workings.
+MoneyEU uses a hosted checkout model and is fully webhook-driven.
 
 ---
 
-## Database Schema
+## Workflow
 
-### `green_payments` table
+### 1. Customer selects Credit/Debit Card
 
-| Column | Type | Description |
-|--------|------|-------------|
-| id | serial | Primary key |
-| shopify_order_id | text | Shopify numeric order ID |
-| shopify_order_name | text | Shopify order name (#xxxx) |
-| amount | numeric | Order total |
-| currency | text | ISO currency code |
-| invoice_id | text | Green Money invoice ID |
-| green_check_id | text | Green Money check/debit ID |
-| current_status | text | `invoice_sent`, `cleared`, `rejected`, or `shopify_payment_error` |
-| is_cleared | boolean | Whether ACH settled successfully |
-| shopify_marked_paid_at | timestamptz | Timestamp when Shopify marked paid |
-| rejected_at | timestamptz | Timestamp when debit became rejected |
-| created_at | timestamptz | Row creation timestamp |
-| last_status_at | timestamptz | Last status check timestamp |
-| updated_at | timestamptz | Last DB update timestamp |
+Shopify creates an order using a manual payment method.
 
 ---
 
-## Poller Logic Summary
+### 2. Shopify triggers `orders/create`
 
-Runs every X minutes:
+The Go service:
 
-1. Load rows where:
-   `current_status = 'invoice_sent'
-AND is_cleared = false
-AND shopify_marked_paid_at IS NULL`
-2. If no Check_ID → call `InvoiceStatus`  
-3. If Check_ID exists → call `CheckStatus`  
-4. If cleared → mark Shopify paid  
-5. If rejected → mark DB rejected  
+- Validates payment method  
+- Inserts payment record  
+- Calls MoneyEU `createOrderExt`  
+- Receives secure hosted checkout URL  
+- Emails checkout link to customer  
+
+The platform’s checkout is not modified — payment is completed on the processor’s hosted page.
+
+---
+
+### 3. Customer completes card payment
+
+The customer completes payment within MoneyEU’s secure hosted checkout environment.
 
 ---
 
-## Testing
+### 4. MoneyEU sends webhook events
 
-Validated using:
+MoneyEU posts status updates to:
 
-- Shopify order with Green Money payment  
-- Shopfiy → webhook → DB insert  
-- Invoice email sent successfully  
-- InvoiceStatus returning Check_ID  
-- CheckStatus returning Processed after batching  
-- Poller marking Shopify paid on settlement  
-- Handling of canceled Shopify orders  
-- Handling of rejected debits  
+```/webhooks/moneyeu```
+
+Example lifecycle events:
+
+- Sent
+- Completed
+- Failed
 
 ---
+
+### 5. Webhook processing logic
+
+The service:
+
+- Parses and validates webhook payload  
+- Extracts `idOrderExt` (Shopify order ID)  
+- Stores raw webhook event  
+- Applies lifecycle transition rules  
+
+If status indicates successful capture:
+
+- Ensures idempotency  
+- Calls Shopify Admin API  
+- Marks order Paid  
+- Records reconciliation timestamp  
+
+If status indicates failure:
+
+- Updates status to `failed`  
+- Records failure metadata  
+- Leaves Shopify order unpaid  
+
+---
+
+## Idempotency & Safety Design
+
+Payment systems must assume:
+
+- Webhooks may be delivered multiple times  
+- Events can arrive out of order  
+- External APIs may retry  
+
+Safeguards implemented:
+
+- Unique constraints on Shopify order IDs  
+- Database-level idempotency checks  
+- Safe lifecycle transition rules  
+- Duplicate webhook suppression  
+- One-time Shopify mark-paid logic  
+- Separation of acknowledgement and processing  
+
+The system is resilient to:
+
+- Duplicate order webhooks  
+- Processor retry events  
+- Slow API responses  
+- Partial external failures  
+
+---
+
+## Background Polling (Green Only)
+
+A background job runs at a configurable interval to:
+
+- Query unsettled ACH payments  
+- Resolve Invoice → Check_ID  
+- Check settlement status  
+- Mark Shopify paid after clearance  
+- Stop tracking rejected payments  
+
+MoneyEU does not require polling — it is fully webhook-driven.
+
+---
+
+## Testing & Validation
+
+Validated through:
+
+- Live Shopify order creation  
+- Duplicate webhook simulations  
+- Processor retry testing  
+- ACH settlement batching scenarios  
+- Card authorization success/failure flows  
+- End-to-end Shopify payment reconciliation  
+- Idempotency under repeated events  
+
+Both payment rails are currently running end-to-end in production.
+
+---
+
+## Design Principles
+
+This project emphasizes:
+
+- Correctness over speed  
+- Explicit payment state modeling  
+- Event-driven architecture  
+- Clear separation of processor-specific logic  
+- Resilience under retry conditions  
+- Safe financial reconciliation  
