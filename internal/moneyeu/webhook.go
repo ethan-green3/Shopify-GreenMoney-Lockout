@@ -70,14 +70,16 @@ func MoneyEUWebhookHandler(db *sql.DB, shopifyResolver ShopifyResolver) http.Han
 		}
 
 		shopifyOrderID := strings.TrimSpace(item.IdOrderExt)
-		shopDomain := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("shop_domain")))
 		status := strings.ToLower(strings.TrimSpace(item.Status))
-		if shopDomain == "" {
-			log.Printf("MoneyEU webhook missing shop_domain for order %s", shopifyOrderID)
+
+		paymentInfo, err := GetMoneyEUPaymentInfoByOrderID(db, shopifyOrderID)
+		if err != nil {
+			log.Printf("MoneyEU webhook lookup error for order %s: %v", shopifyOrderID, err)
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte("ok"))
 			return
 		}
+		shopDomain := paymentInfo.ShopDomain
 
 		// Store webhook event
 		_ = StoreMoneyEUWebhookEvent(db, shopDomain, shopifyOrderID, status, raw)

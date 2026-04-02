@@ -12,6 +12,56 @@ type ShopifyPaymentInfo struct {
 	ShopifyNumericID int64
 }
 
+func GetMoneyEUPaymentInfoByOrderID(db *sql.DB, shopifyOrderID string) (*ShopifyPaymentInfo, error) {
+	rows, err := db.Query(`
+		SELECT shop_domain, amount, currency, shopify_order_id
+		FROM money_eu_payments
+		WHERE shopify_order_id = $1
+		ORDER BY updated_at DESC, created_at DESC, id DESC
+		LIMIT 2
+	`, shopifyOrderID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var matches []*ShopifyPaymentInfo
+	for rows.Next() {
+		var amount float64
+		var currencyDB string
+		var orderIDStr string
+		var domain string
+
+		if err := rows.Scan(&domain, &amount, &currencyDB, &orderIDStr); err != nil {
+			return nil, err
+		}
+
+		var id int64
+		_, scanErr := fmt.Sscan(orderIDStr, &id)
+		if scanErr != nil {
+			return nil, fmt.Errorf("parse shopify_order_id=%q to int64: %w", orderIDStr, scanErr)
+		}
+
+		matches = append(matches, &ShopifyPaymentInfo{
+			ShopDomain:       domain,
+			AmountStr:        fmt.Sprintf("%.2f", amount),
+			Currency:         currencyDB,
+			ShopifyNumericID: id,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(matches) == 0 {
+		return nil, sql.ErrNoRows
+	}
+	if len(matches) > 1 {
+		return nil, fmt.Errorf("multiple money_eu_payments rows found for shopify_order_id=%s; webhook is ambiguous without shop_domain", shopifyOrderID)
+	}
+
+	return matches[0], nil
+}
+
 // Store webhook payload and status
 func StoreMoneyEUWebhookEvent(db *sql.DB, shopDomain string, shopifyOrderID string, status string, rawPayload []byte) error {
 	_, err := db.Exec(`
