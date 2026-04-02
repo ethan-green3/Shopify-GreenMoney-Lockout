@@ -20,6 +20,7 @@ const (
 // GreenPayment matches the green_payments table structure (simplified for now).
 type GreenPayment struct {
 	ID               int64
+	ShopDomain       string
 	ShopifyOrderID   int64
 	ShopifyOrderName string
 	Amount           float64
@@ -47,6 +48,7 @@ func InsertPendingPayment(db *sql.DB, order ShopifyOrder) (int64, error) {
 
 	query := `
 		INSERT INTO green_payments (
+			shop_domain,
 			shopify_order_id,
 			shopify_order_name,
 			amount,
@@ -56,13 +58,14 @@ func InsertPendingPayment(db *sql.DB, order ShopifyOrder) (int64, error) {
 			created_at,
 			updated_at,
 			last_status_at
-		) VALUES ($1, $2, $3, $4, $5, FALSE, NOW(), NOW(), NOW())
+		) VALUES ($1, $2, $3, $4, $5, $6, FALSE, NOW(), NOW(), NOW())
 		RETURNING id
 	`
 
 	var id int64
 	err = db.QueryRow(
 		query,
+		order.ShopDomain,
 		order.ID,
 		order.Name,
 		amount,
@@ -101,6 +104,7 @@ func GetPaymentByCheckID(db *sql.DB, chkID string) (*GreenPayment, error) {
 	query := `
 		SELECT
 			id,
+			shop_domain,
 			shopify_order_id,
 			shopify_order_name,
 			amount,
@@ -123,6 +127,7 @@ func GetPaymentByCheckID(db *sql.DB, chkID string) (*GreenPayment, error) {
 	var gp GreenPayment
 	err := row.Scan(
 		&gp.ID,
+		&gp.ShopDomain,
 		&gp.ShopifyOrderID,
 		&gp.ShopifyOrderName,
 		&gp.Amount,
@@ -135,6 +140,7 @@ func GetPaymentByCheckID(db *sql.DB, chkID string) (*GreenPayment, error) {
 		&gp.CreatedAt,
 		&gp.UpdatedAt,
 		&gp.LastStatusAt,
+		&gp.ProcessedAt,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -179,6 +185,7 @@ func ListPendingInvoicePayments(db *sql.DB) ([]*GreenPayment, error) {
 	rows, err := db.Query(`
 		SELECT
 			id,
+			shop_domain,
 			shopify_order_id,
 			shopify_order_name,
 			invoice_id,
@@ -205,6 +212,7 @@ func ListPendingInvoicePayments(db *sql.DB) ([]*GreenPayment, error) {
 		var p GreenPayment
 		err := rows.Scan(
 			&p.ID,
+			&p.ShopDomain,
 			&p.ShopifyOrderID,
 			&p.ShopifyOrderName,
 			&p.InvoiceID,

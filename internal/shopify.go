@@ -1,5 +1,13 @@
 package internal
 
+import (
+	"fmt"
+	"net/http"
+	"strings"
+)
+
+const ShopifyShopDomainHeader = "X-Shopify-Shop-Domain"
+
 // ShopifyAddress is a subset of the address object from Shopify.
 type ShopifyAddress struct {
 	FirstName string `json:"first_name"`
@@ -19,6 +27,7 @@ type ShopifyCustomer struct {
 type ShopifyOrder struct {
 	ID                  int64            `json:"id"`
 	Name                string           `json:"name"`
+	ShopDomain          string           `json:"-"`
 	Email               string           `json:"email"`
 	TotalPrice          string           `json:"total_price"`
 	Currency            string           `json:"currency"`
@@ -45,4 +54,12 @@ func IsMoneyEUOrder(o ShopifyOrder) bool {
 		}
 	}
 	return false
+}
+
+func ExtractShopDomain(r *http.Request) (string, error) {
+	shopDomain := strings.ToLower(strings.TrimSpace(r.Header.Get(ShopifyShopDomainHeader)))
+	if shopDomain == "" {
+		return "", fmt.Errorf("missing %s header", ShopifyShopDomainHeader)
+	}
+	return shopDomain, nil
 }

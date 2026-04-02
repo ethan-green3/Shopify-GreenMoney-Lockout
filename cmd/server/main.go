@@ -46,11 +46,13 @@ func main() {
 
 	log.Println("Connected to database")
 
-	if os.Getenv("SHOPIFY_STORE_DOMAIN") == "" || os.Getenv("SHOPIFY_ACCESS_TOKEN") == "" {
-		log.Fatal("WARNING: SHOPIFY_STORE_DOMAIN or SHOPIFY_ACCESS_TOKEN not set; Shopify calls will fail")
+	shopifyRegistry, err := internal.NewShopifyClientRegistryFromEnv()
+	if err != nil {
+		log.Fatalf("failed to load Shopify config: %v", err)
 	}
-
-	shopifyClient := internal.NewShopifyClient(os.Getenv("SHOPIFY_STORE_DOMAIN"), os.Getenv("SHOPIFY_ACCESS_TOKEN"), os.Getenv("SHOPIFY_API_VERSION"))
+	if !shopifyRegistry.HasAny() {
+		log.Fatal("WARNING: no Shopify store config found; set SHOPIFY_STORE_DOMAIN/SHOPIFY_ACCESS_TOKEN or SHOPIFY_STORE_CONFIGS")
+	}
 	greenClient := internal.NewGreenClientFromEnv()
 	moneyClient := moneyeu.NewClient(
 		os.Getenv("MONEYEU_BASE_URL"),
@@ -64,7 +66,7 @@ func main() {
 	}
 
 	ctx := context.Background()
-	internal.StartGreenPoller(ctx, db, greenClient, shopifyClient, 1*time.Minute)
+	internal.StartGreenPoller(ctx, db, greenClient, shopifyRegistry, 1*time.Minute)
 
 	if os.Getenv("SEND_TEST_EMAIL") == "1" {
 		err = email.Send(smtpCfg, "ethangreen2000@yahoo.com", "SMTP Test", "Hi Ethan, the SMTP Server for Lockout Supplements is up and running now")
@@ -80,11 +82,11 @@ func main() {
 		fmt.Fprintln(w, "ok")
 	})
 
-	mux.HandleFunc("/webhooks/moneyeu", moneyeu.MoneyEUWebhookHandler(db, shopifyClient))
+	mux.HandleFunc("/webhooks/moneyeu", moneyeu.MoneyEUWebhookHandler(db, moneyeuShopifyResolver{registry: shopifyRegistry}))
 
 	mux.HandleFunc("/webhooks/shopify/orders-create", internal.ShopifyOrderCreateHandler(db, greenClient, moneySvc))
 
-	mux.HandleFunc("/green/ipn", internal.GreenIPNHandler(db, shopifyClient, greenClient))
+	mux.HandleFunc("/green/ipn", internal.GreenIPNHandler(db, shopifyRegistry, greenClient))
 
 	mux.HandleFunc("/debug/green/unseen", func(w http.ResponseWriter, r *http.Request) {
 		res, err := greenClient.UnseenNotifications(r.Context())

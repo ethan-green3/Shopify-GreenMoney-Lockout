@@ -5,8 +5,15 @@ import (
 	"fmt"
 )
 
+type ShopifyPaymentInfo struct {
+	ShopDomain       string
+	AmountStr        string
+	Currency         string
+	ShopifyNumericID int64
+}
+
 // Store webhook payload and status
-func StoreMoneyEUWebhookEvent(db *sql.DB, shopifyOrderID string, status string, rawPayload []byte) error {
+func StoreMoneyEUWebhookEvent(db *sql.DB, shopDomain string, shopifyOrderID string, status string, rawPayload []byte) error {
 	_, err := db.Exec(`
 		UPDATE money_eu_payments
 		SET
@@ -14,19 +21,21 @@ func StoreMoneyEUWebhookEvent(db *sql.DB, shopifyOrderID string, status string, 
 			last_event_at = NOW(),
 			last_webhook_payload = $2::jsonb,
 			updated_at = NOW()
-		WHERE shopify_order_id = $3
-	`, status, string(rawPayload), shopifyOrderID)
+		WHERE shop_domain = $3
+		  AND shopify_order_id = $4
+	`, status, string(rawPayload), shopDomain, shopifyOrderID)
 	return err
 }
 
 // Idempotency check
-func IsMoneyEUShopifyMarkedPaid(db *sql.DB, shopifyOrderID string) (bool, error) {
+func IsMoneyEUShopifyMarkedPaid(db *sql.DB, shopDomain string, shopifyOrderID string) (bool, error) {
 	var exists bool
 	err := db.QueryRow(`
 		SELECT (shopify_marked_paid_at IS NOT NULL)
 		FROM money_eu_payments
-		WHERE shopify_order_id = $1
-	`, shopifyOrderID).Scan(&exists)
+		WHERE shop_domain = $1
+		  AND shopify_order_id = $2
+	`, shopDomain, shopifyOrderID).Scan(&exists)
 	if err != nil {
 		return false, err
 	}
@@ -34,31 +43,38 @@ func IsMoneyEUShopifyMarkedPaid(db *sql.DB, shopifyOrderID string) (bool, error)
 }
 
 // Pull amount/currency + Shopify numeric order id (stored as string in your current MoneyEU code)
-func GetMoneyEUShopifyPaymentInfo(db *sql.DB, shopifyOrderID string) (amountStr string, currency string, shopifyNumericID int64, err error) {
+func GetMoneyEUShopifyPaymentInfo(db *sql.DB, shopDomain string, shopifyOrderID string) (*ShopifyPaymentInfo, error) {
 	var amount float64
 	var currencyDB string
 	var orderIDStr string
+	var domain string
 
-	err = db.QueryRow(`
-		SELECT amount, currency, shopify_order_id
+	err := db.QueryRow(`
+		SELECT shop_domain, amount, currency, shopify_order_id
 		FROM money_eu_payments
-		WHERE shopify_order_id = $1
-	`, shopifyOrderID).Scan(&amount, &currencyDB, &orderIDStr)
+		WHERE shop_domain = $1
+		  AND shopify_order_id = $2
+	`, shopDomain, shopifyOrderID).Scan(&domain, &amount, &currencyDB, &orderIDStr)
 	if err != nil {
-		return "", "", 0, err
+		return nil, err
 	}
 
 	var id int64
 	_, scanErr := fmt.Sscan(orderIDStr, &id)
 	if scanErr != nil {
-		return "", "", 0, fmt.Errorf("parse shopify_order_id=%q to int64: %w", orderIDStr, scanErr)
+		return nil, fmt.Errorf("parse shopify_order_id=%q to int64: %w", orderIDStr, scanErr)
 	}
 
-	return fmt.Sprintf("%.2f", amount), currencyDB, id, nil
+	return &ShopifyPaymentInfo{
+		ShopDomain:       domain,
+		AmountStr:        fmt.Sprintf("%.2f", amount),
+		Currency:         currencyDB,
+		ShopifyNumericID: id,
+	}, nil
 }
 
 // Mark locally as paid (only once)
-func MarkMoneyEUShopifyPaid(db *sql.DB, shopifyOrderID string) error {
+func MarkMoneyEUShopifyPaid(db *sql.DB, shopDomain string, shopifyOrderID string) error {
 	_, err := db.Exec(`
 		UPDATE money_eu_payments
 		SET
@@ -66,33 +82,36 @@ func MarkMoneyEUShopifyPaid(db *sql.DB, shopifyOrderID string) error {
 			paid_at = COALESCE(paid_at, NOW()),
 			status = 'paid',
 			updated_at = NOW()
-		WHERE shopify_order_id = $1
+		WHERE shop_domain = $1
+		  AND shopify_order_id = $2
 		  AND shopify_marked_paid_at IS NULL
-	`, shopifyOrderID)
+	`, shopDomain, shopifyOrderID)
 	return err
 }
 
-func MarkMoneyEUFailed(db *sql.DB, shopifyOrderID string, reason string) error {
+func MarkMoneyEUFailed(db *sql.DB, shopDomain string, shopifyOrderID string, reason string) error {
 	_, err := db.Exec(`
         UPDATE money_eu_payments
         SET status='failed',
             failed_at=NOW(),
-            failure_reason=LEFT($2, 500),
+            failure_reason=LEFT($3, 500),
             updated_at=NOW()
-        WHERE shopify_order_id=$1
-    `, shopifyOrderID, reason)
+        WHERE shop_domain=$1
+          AND shopify_order_id=$2
+    `, shopDomain, shopifyOrderID, reason)
 	return err
 }
 
-func HasCheckoutLinkForOrder(db *sql.DB, shopifyOrderID string) (bool, error) {
+func HasCheckoutLinkForOrder(db *sql.DB, shopDomain string, shopifyOrderID string) (bool, error) {
 	var exists bool
 	err := db.QueryRow(`
 		SELECT EXISTS (
 			SELECT 1
 			FROM money_eu_payments
-			WHERE shopify_order_id = $1
+			WHERE shop_domain = $1
+			  AND shopify_order_id = $2
 			  AND COALESCE(NULLIF(checkout_url, ''), '') <> ''
 		)
-	`, shopifyOrderID).Scan(&exists)
+	`, shopDomain, shopifyOrderID).Scan(&exists)
 	return exists, err
 }

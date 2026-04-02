@@ -31,12 +31,12 @@ func shouldRunGreenPoll(t time.Time) bool {
 	}
 }
 
-func StartGreenPoller(ctx context.Context, db *sql.DB, green *GreenClient, shopify *ShopifyClient, interval time.Duration) {
+func StartGreenPoller(ctx context.Context, db *sql.DB, green *GreenClient, shopifyRegistry *ShopifyClientRegistry, interval time.Duration) {
 	if green == nil || green.ClientID == "" || green.APIPassword == "" {
 		log.Fatal("Green poller: Green client not configured, not starting poller")
 		return
 	}
-	if shopify == nil || shopify.StoreDomain == "" || shopify.AccessToken == "" {
+	if shopifyRegistry == nil || !shopifyRegistry.HasAny() {
 		log.Fatal("Green poller: Shopify client not configured, not starting poller")
 		return
 	}
@@ -60,7 +60,7 @@ func StartGreenPoller(ctx context.Context, db *sql.DB, green *GreenClient, shopi
 					// log.Println("Green Poller: Not one of the 8:30/13:30/16:30 slots.")
 					continue
 				}
-				if err := pollOnce(ctx, db, green, shopify); err != nil {
+				if err := pollOnce(ctx, db, green, shopifyRegistry); err != nil {
 					log.Printf("Green poller: poll error: %v", err)
 				}
 
@@ -69,7 +69,7 @@ func StartGreenPoller(ctx context.Context, db *sql.DB, green *GreenClient, shopi
 	}()
 }
 
-func pollOnce(ctx context.Context, db *sql.DB, green *GreenClient, shopify *ShopifyClient) error {
+func pollOnce(ctx context.Context, db *sql.DB, green *GreenClient, shopifyRegistry *ShopifyClientRegistry) error {
 	payments, err := ListPendingInvoicePayments(db)
 	if err != nil {
 		return fmt.Errorf("list pending invoices: %w", err)
@@ -192,6 +192,11 @@ func pollOnce(ctx context.Context, db *sql.DB, green *GreenClient, shopify *Shop
 
 		// STEP 4: 24h have passed since processed_at → now it's safe to mark Shopify order as paid.
 		amountStr := fmt.Sprintf("%.2f", p.Amount)
+		shopify, err := shopifyRegistry.ForShopDomain(p.ShopDomain)
+		if err != nil {
+			log.Printf("Green poller: Shopify client lookup error for order_id=%d shop_domain=%s: %v", p.ShopifyOrderID, p.ShopDomain, err)
+			continue
+		}
 		if err := shopify.MarkOrderPaid(ctx, p.ShopifyOrderID, amountStr, p.Currency); err != nil {
 			log.Printf("Green poller: Shopify MarkOrderPaid error for order_id=%d: %v", p.ShopifyOrderID, err)
 

@@ -15,6 +15,7 @@ import (
 type ShopifyOrderLite struct {
 	ID                  int64    `json:"id"`
 	Name                string   `json:"name"`
+	ShopDomain          string   `json:"-"`
 	Email               string   `json:"email"`
 	TotalPrice          string   `json:"total_price"`
 	Currency            string   `json:"currency"`
@@ -41,10 +42,14 @@ type Service struct {
 	SMTP   email.SMTPConfig
 }
 
-func (s *Service) HandleShopifyOrderJSON(ctx context.Context, raw []byte) error {
+func (s *Service) HandleShopifyOrderJSON(ctx context.Context, raw []byte, shopDomain string) error {
 	var o ShopifyOrderLite
 	if err := json.Unmarshal(raw, &o); err != nil {
 		return fmt.Errorf("moneyeu: decode Shopify order: %w", err)
+	}
+	o.ShopDomain = strings.ToLower(strings.TrimSpace(shopDomain))
+	if o.ShopDomain == "" {
+		return fmt.Errorf("moneyeu: shop domain is required")
 	}
 
 	amount, err := strconv.ParseFloat(o.TotalPrice, 64)
@@ -827,6 +832,7 @@ func (s *Service) HandleShopifyOrderJSON(ctx context.Context, raw []byte) error 
 	//o.Currency = "EUR"
 	// 1) Insert DB row first
 	paymentID, err := InsertMoneyEUPayment(s.DB, PaymentRow{
+		ShopDomain:       o.ShopDomain,
 		ShopifyOrderID:   strconv.FormatInt(o.ID, 10),
 		ShopifyOrderName: o.Name,
 		Amount:           amount,

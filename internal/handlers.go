@@ -38,6 +38,13 @@ func ShopifyOrderCreateHandler(db *sql.DB, green *GreenClient, moneySvc *moneyeu
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
+		shopDomain, err := ExtractShopDomain(r)
+		if err != nil {
+			log.Printf("Shopify webhook: %v", err)
+			http.Error(w, "missing shop domain", http.StatusBadRequest)
+			return
+		}
+		order.ShopDomain = shopDomain
 
 		// If it's not a Green Money order, just ignore it.
 		if IsGreenMoneyOrder(order) {
@@ -89,7 +96,7 @@ func ShopifyOrderCreateHandler(db *sql.DB, green *GreenClient, moneySvc *moneyeu
 
 			// 1) Idempotency check BEFORE calling MoneyEU
 			// If we already created a checkout link (or emailed it), do nothing.
-			already, err := moneyeu.HasCheckoutLinkForOrder(db, strconv.FormatInt(order.ID, 10))
+			already, err := moneyeu.HasCheckoutLinkForOrder(db, shopDomain, strconv.FormatInt(order.ID, 10))
 			if err != nil {
 				log.Printf("Shopify webhook: MoneyEU idempotency check error for %s: %v", order.Name, err)
 				// still 200 so Shopify doesn’t hammer you
@@ -105,7 +112,7 @@ func ShopifyOrderCreateHandler(db *sql.DB, green *GreenClient, moneySvc *moneyeu
 			}
 
 			// 2) Do the slow work synchronously
-			if err := moneySvc.HandleShopifyOrderJSON(r.Context(), raw); err != nil {
+			if err := moneySvc.HandleShopifyOrderJSON(r.Context(), raw, shopDomain); err != nil {
 				log.Printf("Shopify webhook: MoneyEU error for %s: %v", order.Name, err)
 				w.WriteHeader(http.StatusOK)
 				w.Write([]byte("moneyeu_error"))
@@ -127,7 +134,7 @@ func ShopifyOrderCreateHandler(db *sql.DB, green *GreenClient, moneySvc *moneyeu
 // Example request Green will send:
 //
 //	GET /green/ipn?ChkID=123&TransID=456
-func GreenIPNHandler(db *sql.DB, shopify *ShopifyClient, green *GreenClient) http.HandlerFunc {
+func GreenIPNHandler(db *sql.DB, shopifyRegistry *ShopifyClientRegistry, green *GreenClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		chkID := r.URL.Query().Get("ChkID")
 		transID := r.URL.Query().Get("TransID")
@@ -182,8 +189,14 @@ func GreenIPNHandler(db *sql.DB, shopify *ShopifyClient, green *GreenClient) htt
 		}
 
 		// 3) Call Shopify to mark the order as paid (if client is configured)
-		if shopify != nil && shopify.StoreDomain != "" && shopify.AccessToken != "" {
+		if shopifyRegistry != nil {
 			amountStr := fmt.Sprintf("%.2f", payment.Amount) // convert float64 to "129.99"
+			shopify, err := shopifyRegistry.ForShopDomain(payment.ShopDomain)
+			if err != nil {
+				log.Printf("Shopify client lookup error for shop domain %s: %v", payment.ShopDomain, err)
+				http.Error(w, "failed to resolve Shopify client", http.StatusBadGateway)
+				return
+			}
 
 			if err := shopify.MarkOrderPaid(r.Context(), payment.ShopifyOrderID, amountStr, payment.Currency); err != nil {
 				log.Printf("Shopify MarkOrderPaid error: %v", err)

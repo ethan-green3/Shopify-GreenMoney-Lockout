@@ -10,9 +10,12 @@ import (
 	"strings"
 )
 
-// This interface avoids importing internal.ShopifyClient
 type ShopifyPayer interface {
 	MarkOrderPaid(ctx context.Context, orderID int64, amount string, currency string) error
+}
+
+type ShopifyResolver interface {
+	ForShopDomain(shopDomain string) (ShopifyPayer, error)
 }
 
 type webhookEnvelope struct {
@@ -28,7 +31,7 @@ type webhookContentItem struct {
 	Url        string `json:"url"`
 }
 
-func MoneyEUWebhookHandler(db *sql.DB, shopify ShopifyPayer) http.HandlerFunc {
+func MoneyEUWebhookHandler(db *sql.DB, shopifyResolver ShopifyResolver) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 
 		if r.Method != http.MethodPost {
@@ -67,14 +70,21 @@ func MoneyEUWebhookHandler(db *sql.DB, shopify ShopifyPayer) http.HandlerFunc {
 		}
 
 		shopifyOrderID := strings.TrimSpace(item.IdOrderExt)
+		shopDomain := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("shop_domain")))
 		status := strings.ToLower(strings.TrimSpace(item.Status))
+		if shopDomain == "" {
+			log.Printf("MoneyEU webhook missing shop_domain for order %s", shopifyOrderID)
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("ok"))
+			return
+		}
 
 		// Store webhook event
-		_ = StoreMoneyEUWebhookEvent(db, shopifyOrderID, status, raw)
+		_ = StoreMoneyEUWebhookEvent(db, shopDomain, shopifyOrderID, status, raw)
 
 		if isPaidStatus(status) {
 
-			alreadyPaid, err := IsMoneyEUShopifyMarkedPaid(db, shopifyOrderID)
+			alreadyPaid, err := IsMoneyEUShopifyMarkedPaid(db, shopDomain, shopifyOrderID)
 			if err != nil {
 				log.Printf("check paid error: %v", err)
 				w.WriteHeader(http.StatusOK)
@@ -89,7 +99,7 @@ func MoneyEUWebhookHandler(db *sql.DB, shopify ShopifyPayer) http.HandlerFunc {
 				return
 			}
 
-			amountStr, currency, numericID, err := GetMoneyEUShopifyPaymentInfo(db, shopifyOrderID)
+			paymentInfo, err := GetMoneyEUShopifyPaymentInfo(db, shopDomain, shopifyOrderID)
 			if err != nil {
 				log.Printf("lookup error: %v", err)
 				w.WriteHeader(http.StatusOK)
@@ -97,14 +107,22 @@ func MoneyEUWebhookHandler(db *sql.DB, shopify ShopifyPayer) http.HandlerFunc {
 				return
 			}
 
-			if err := shopify.MarkOrderPaid(r.Context(), numericID, amountStr, currency); err != nil {
+			shopify, err := shopifyResolver.ForShopDomain(paymentInfo.ShopDomain)
+			if err != nil {
+				log.Printf("Shopify client lookup error: %v", err)
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte("ok"))
+				return
+			}
+
+			if err := shopify.MarkOrderPaid(r.Context(), paymentInfo.ShopifyNumericID, paymentInfo.AmountStr, paymentInfo.Currency); err != nil {
 				log.Printf("Shopify mark paid error: %v", err)
 				w.WriteHeader(http.StatusOK)
 				w.Write([]byte("ok"))
 				return
 			}
 
-			_ = MarkMoneyEUShopifyPaid(db, shopifyOrderID)
+			_ = MarkMoneyEUShopifyPaid(db, shopDomain, shopifyOrderID)
 
 			log.Printf("MoneyEU order %s marked paid in Shopify", shopifyOrderID)
 		}
@@ -118,7 +136,7 @@ func MoneyEUWebhookHandler(db *sql.DB, shopify ShopifyPayer) http.HandlerFunc {
 				reason = "MoneyEU reported payment failure"
 			}
 
-			_ = MarkMoneyEUFailed(db, shopifyOrderID, reason)
+			_ = MarkMoneyEUFailed(db, shopDomain, shopifyOrderID, reason)
 
 			log.Printf("MoneyEU order %s failed (status=%s): %s", shopifyOrderID, status, reason)
 

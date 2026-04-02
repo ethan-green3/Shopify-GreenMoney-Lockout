@@ -6,6 +6,7 @@ import (
 )
 
 type PaymentRow struct {
+	ShopDomain       string
 	ShopifyOrderID   string
 	ShopifyOrderName string
 	Amount           float64
@@ -19,11 +20,11 @@ func InsertMoneyEUPayment(db *sql.DB, r PaymentRow) (int64, error) {
 	var id int64
 	err := db.QueryRow(`
 		INSERT INTO money_eu_payments
-			(shopify_order_id, shopify_order_name, amount, currency, customer_email, customer_name, customer_phone, current_status)
+			(shop_domain, shopify_order_id, shopify_order_name, amount, currency, customer_email, customer_name, customer_phone, current_status)
 		VALUES
-			($1,$2,$3,$4,$5,$6,$7,'created')
+			($1,$2,$3,$4,$5,$6,$7,$8,'created')
 		RETURNING id
-	`, r.ShopifyOrderID, r.ShopifyOrderName, r.Amount, r.Currency, r.CustomerEmail, r.CustomerName, r.CustomerPhone).Scan(&id)
+	`, r.ShopDomain, r.ShopifyOrderID, r.ShopifyOrderName, r.Amount, r.Currency, r.CustomerEmail, r.CustomerName, r.CustomerPhone).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("insert money_eu_payments: %w", err)
 	}

@@ -267,3 +267,45 @@ This project emphasizes:
 - Clear separation of processor-specific logic  
 - Resilience under retry conditions  
 - Safe financial reconciliation  
+
+---
+
+## Migrations
+
+This repo now includes a migration runner:
+
+```bash
+go run ./cmd/migrate
+```
+
+It applies SQL files from `migrations/` in filename order and records applied versions in `schema_migrations`.
+
+### Production rollout for `shop_domain`
+
+The `shop_domain` rollout is intentionally split across:
+
+1. `003_add_shop_domain_nullable.sql`
+2. `004_backfill_shop_domain.sql`
+3. `005_enforce_shop_domain.sql`
+
+This sequence:
+
+- adds nullable columns first
+- backfills historical rows to `lockoutsupplements.myshopify.com`
+- then enforces `NOT NULL`
+- then adds composite unique indexes on `(shop_domain, shopify_order_id)`
+
+### Render deployment
+
+Recommended setup on Render:
+
+- Keep your web service start command for the app
+- Add a pre-deploy command:
+
+```bash
+go run ./cmd/migrate
+```
+
+- Ensure `DB_URL` is available to that command
+
+That way migrations run before the new app version serves traffic.
