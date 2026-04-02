@@ -1,4 +1,4 @@
-CREATE TABLE green_payments (
+CREATE TABLE IF NOT EXISTS green_payments (
     id                          BIGSERIAL PRIMARY KEY,
     shopify_order_id            TEXT NOT NULL,
     shopify_order_name          TEXT,
