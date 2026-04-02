@@ -94,20 +94,11 @@ func isApplied(db *sql.DB, version string) (bool, error) {
 }
 
 func applyMigration(db *sql.DB, version, sqlText string) error {
-	tx, err := db.Begin()
-	if err != nil {
-		return fmt.Errorf("begin migration tx: %w", err)
-	}
-	defer tx.Rollback()
-
-	if _, err := tx.Exec(sqlText); err != nil {
+	if _, err := db.Exec(sqlText); err != nil {
 		return fmt.Errorf("exec migration SQL: %w", err)
 	}
-	if _, err := tx.Exec(`INSERT INTO schema_migrations (version) VALUES ($1)`, version); err != nil {
+	if _, err := db.Exec(`INSERT INTO schema_migrations (version) VALUES ($1)`, version); err != nil {
 		return fmt.Errorf("record migration: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit migration tx: %w", err)
 	}
 	return nil
 }
