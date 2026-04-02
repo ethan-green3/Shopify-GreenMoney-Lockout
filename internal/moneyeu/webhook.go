@@ -126,7 +126,7 @@ func MoneyEUWebhookHandler(db *sql.DB, shopifyResolver ShopifyResolver) http.Han
 
 			_ = MarkMoneyEUShopifyPaid(db, shopDomain, shopifyOrderID)
 
-			log.Printf("MoneyEU order %s marked paid in Shopify", shopifyOrderID)
+			log.Printf("MoneyEU order %s marked paid in %s", shopifyOrderID, shopDomain)
 		}
 
 		w.WriteHeader(http.StatusOK)
