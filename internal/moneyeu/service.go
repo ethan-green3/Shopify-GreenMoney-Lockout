@@ -828,8 +828,7 @@ func (s *Service) HandleShopifyOrderJSON(ctx context.Context, raw []byte, shopDo
 
 	}
 
-	//*****COMMENT THIS OUT FOR PRODUCTION************
-	//o.Currency = "EUR"
+	o.Currency = "EUR"
 	// 1) Insert DB row first
 	paymentID, err := InsertMoneyEUPayment(s.DB, PaymentRow{
 		ShopDomain:       o.ShopDomain,
