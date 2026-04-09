@@ -57,8 +57,7 @@ func (s *Service) HandleShopifyOrderJSON(ctx context.Context, raw []byte, shopDo
 		return fmt.Errorf("parse total_price %q: %w", o.TotalPrice, err)
 	}
 	// MoneyEU charges should be reduced to account for exchange-rate conversion.
-	amount *= 0.832415
-
+	convertedAmount := amount * 0.832415
 	// choose address
 	addr := o.ShippingAddress
 	if addr == nil {
@@ -848,7 +847,7 @@ func (s *Service) HandleShopifyOrderJSON(ctx context.Context, raw []byte, shopDo
 	log.Printf("MoneyEU: inserted payment id=%d for order %s", paymentID, o.Name)
 	// 2) Create MoneyEU order
 	req := CreateOrderExtRequest{
-		Amount:          amount,
+		Amount:          convertedAmount,
 		Currency:        o.Currency,
 		Name:            fallback(customerName, "Customer"),
 		Mail:            o.Email,
