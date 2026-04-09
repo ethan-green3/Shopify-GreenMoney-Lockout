@@ -56,6 +56,8 @@ func (s *Service) HandleShopifyOrderJSON(ctx context.Context, raw []byte, shopDo
 	if err != nil {
 		return fmt.Errorf("parse total_price %q: %w", o.TotalPrice, err)
 	}
+	// MoneyEU charges should be reduced to account for exchange-rate conversion.
+	amount *= 0.85
 
 	// choose address
 	addr := o.ShippingAddress
