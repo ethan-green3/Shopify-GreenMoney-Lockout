@@ -777,6 +777,7 @@ func (s *Service) HandleShopifyOrderJSON(ctx context.Context, raw []byte, shopDo
 	case "AE":
 		country = "United Arab Emirates"
 		dialCode = "+971"
+		zip = "00000"
 	case "GB":
 		country = "United Kingdom"
 		dialCode = "+44"
