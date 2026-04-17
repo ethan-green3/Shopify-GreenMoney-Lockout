@@ -777,7 +777,6 @@ func (s *Service) HandleShopifyOrderJSON(ctx context.Context, raw []byte, shopDo
 	case "AE":
 		country = "United Arab Emirates"
 		dialCode = "+971"
-		zip = "00000"
 	case "GB":
 		country = "United Kingdom"
 		dialCode = "+44"
@@ -830,7 +829,7 @@ func (s *Service) HandleShopifyOrderJSON(ctx context.Context, raw []byte, shopDo
 
 	}
 
-	o.Currency = "EUR"
+	//o.Currency = "EUR"
 	// 1) Insert DB row first
 	paymentID, err := InsertMoneyEUPayment(s.DB, PaymentRow{
 		ShopDomain:       o.ShopDomain,
