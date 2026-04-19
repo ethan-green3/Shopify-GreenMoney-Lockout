@@ -54,11 +54,14 @@ func main() {
 		log.Fatal("WARNING: no Shopify store config found; set SHOPIFY_STORE_DOMAIN/SHOPIFY_ACCESS_TOKEN or SHOPIFY_STORE_CONFIGS")
 	}
 	greenClient := internal.NewGreenClientFromEnv()
-	moneyClient := moneyeu.NewClient(
+	moneyClient, err := moneyeu.NewClient(
 		os.Getenv("MONEYEU_BASE_URL"),
 		os.Getenv("MONEYEU_LIVE_API_KEY"),
 		os.Getenv("MONEYEU_LIVE_SECRET"),
 	)
+	if err != nil {
+		log.Fatalf("Missing env variables: %s", err)
+	}
 	moneySvc := &moneyeu.Service{
 		DB:     db,
 		Client: moneyClient,

@@ -18,35 +18,35 @@ import (
 )
 
 type Client struct {
-	BaseURL   string
-	APIKey    string
-	APISecret string
-	HTTP      *http.Client
+	BaseURL     string
+	APIKey      string
+	APISecret   string
+	HTTP        *http.Client
+	Path        string
+	ServiceName string
 }
 
-func NewClient(baseURL, apiKey, apiSecret string) *Client {
+func NewClient(baseURL, apiKey, apiSecret string) (*Client, error) {
 	// Trim trailing slash so BaseURL + "/api/..." never produces "//api/..."
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 
-	return &Client{
-		BaseURL:   baseURL,
-		APIKey:    strings.TrimSpace(apiKey),
-		APISecret: strings.TrimSpace(apiSecret),
-		HTTP:      &http.Client{Timeout: 20 * time.Second},
+	client := Client{
+		BaseURL:     baseURL,
+		APIKey:      strings.TrimSpace(apiKey),
+		APISecret:   strings.TrimSpace(apiSecret),
+		HTTP:        &http.Client{Timeout: 20 * time.Second},
+		Path:        "/api/createOrderExt",
+		ServiceName: "createOrderExt",
 	}
+
+	if client.APIKey == "" || client.APISecret == "" || client.BaseURL == "" {
+		return nil, fmt.Errorf("MISSING ONE OF: API KEY: %s - API SECRET %s - BASE URL: %s", client.APIKey, client.APISecret, client.BaseURL)
+	}
+
+	return &client, nil
 }
 
 func (c *Client) CreateOrderExt(ctx context.Context, req CreateOrderExtRequest) (*CreateOrderExtResponse, error) {
-	if c.BaseURL == "" {
-		return nil, fmt.Errorf("MoneyEU BaseURL is empty (check MONEYEU_BASE_URL)")
-	}
-	if c.APIKey == "" || c.APISecret == "" {
-		return nil, fmt.Errorf("MoneyEU APIKey/APISecret missing (check env vars)")
-	}
-
-	path := "/api/createOrderExt"
-	serviceName := "createOrderExt"
-
 	// Must be compact JSON (json.Marshal is compact by default)
 	bodyBytes, err := json.Marshal(req)
 	if err != nil {
@@ -64,9 +64,9 @@ func (c *Client) CreateOrderExt(ctx context.Context, req CreateOrderExtRequest) 
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 
 	// Signature per docs: Base64(HMAC-SHA256(secret, serviceName+salt+apiKey+timestamp+body))
-	sig := buildSignature(serviceName, salt, c.APIKey, timestamp, bodyStr, c.APISecret)
+	sig := buildSignature(c.ServiceName, salt, c.APIKey, timestamp, bodyStr, c.APISecret)
 
-	url := c.BaseURL + path
+	url := c.BaseURL + c.Path
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("new request: %w", err)
