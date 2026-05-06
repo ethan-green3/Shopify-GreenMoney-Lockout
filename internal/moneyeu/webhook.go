@@ -6,8 +6,11 @@ import (
 	"encoding/json"
 	"io"
 	"log"
+	"log/slog"
 	"net/http"
 	"strings"
+
+	"github.com/lmittmann/tint"
 )
 
 type ShopifyPayer interface {
@@ -126,7 +129,13 @@ func MoneyEUWebhookHandler(db *sql.DB, shopifyResolver ShopifyResolver) http.Han
 
 			_ = MarkMoneyEUShopifyPaid(db, shopDomain, shopifyOrderID)
 
-			log.Printf("MoneyEU order %s marked paid in %s", shopifyOrderID, shopDomain)
+			slog.Info(
+				"Shopify order marked paid",
+				tint.Attr(10, slog.String("status", "paid")),
+				slog.String("processor", "MoneyEU"),
+				slog.String("shop_domain", shopDomain),
+				slog.String("shopify_order_id", shopifyOrderID),
+			)
 		}
 
 		w.WriteHeader(http.StatusOK)

@@ -213,7 +213,7 @@ func pollOnce(ctx context.Context, db *sql.DB, green *GreenClient, shopifyRegist
 			}
 			continue
 		}
-		log.Printf("Green poller: Shopify order %d marked paid by poller after 24h hold", p.ShopifyOrderID)
+		logShopifyOrderMarkedPaid("Green poller", p.ShopDomain, p.ShopifyOrderID)
 
 		// STEP 5: Update DB to 'cleared'.
 		if err := MarkPaymentCleared(db, p.GreenCheckID); err != nil {

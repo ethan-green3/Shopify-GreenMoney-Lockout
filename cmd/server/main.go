@@ -8,15 +8,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
 	"time"
 
 	"github.com/joho/godotenv"
+	"github.com/lmittmann/tint"
 )
 
 func main() {
+	slog.SetDefault(slog.New(tint.NewHandler(os.Stderr, &tint.Options{
+		TimeFormat: time.Kitchen,
+	})))
+
 	godotenv.Load()
 	testMode := os.Getenv("TEST_MODE")
 	if testMode == "true" {

@@ -203,7 +203,7 @@ func GreenIPNHandler(db *sql.DB, shopifyRegistry *ShopifyClientRegistry, green *
 				http.Error(w, "failed to mark Shopify paid", http.StatusBadGateway)
 				return
 			}
-			log.Printf("Shopify: marked order %d as paid", payment.ShopifyOrderID)
+			logShopifyOrderMarkedPaid("Green IPN", payment.ShopDomain, payment.ShopifyOrderID)
 		} else {
 			log.Printf("Shopify client not configured; skipping Shopify mark-paid call")
 		}
