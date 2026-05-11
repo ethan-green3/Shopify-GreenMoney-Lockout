@@ -912,6 +912,7 @@ func (s *Service) HandleShopifyOrderJSON(ctx context.Context, raw []byte, shopDo
 		Sms:             false,
 		CustomerService: "Lockout Supplements",
 	}
+	log.Printf("Exchange rate for Order: %s is %.6f\n", o.Name, usdToEURRate)
 	log.Println("CreateOrderExt Payload:", req)
 
 	resp, err := s.Client.CreateOrderExt(ctx, req)
