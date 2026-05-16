@@ -30,7 +30,7 @@ type webhookEnvelope struct {
 type webhookContentItem struct {
 	ID         int64  `json:"id"`
 	Status     string `json:"status"`
-	IdOrderExt string `json:"idOrderExt"`
+	IdOrderExt string `json:"orderidext"`
 	Url        string `json:"url"`
 }
 
