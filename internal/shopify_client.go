@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -13,6 +14,7 @@ import (
 type ShopifyClient struct {
 	StoreDomain string       // e.g. "lockoutsupplements.myshopify.com"
 	AccessToken string       // Admin API access token
+	ClientID    string       // Optional Shopify app client ID for newer store apps
 	APIVersion  string       // e.g. "2024-10"
 	HTTPClient  *http.Client // can be nil; we'll default it
 }
@@ -72,7 +74,14 @@ func (c *ShopifyClient) MarkOrderPaid(ctx context.Context, orderID int64, amount
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Shopify-Access-Token", c.AccessToken)
+	if requiresShopifyClientID(c.StoreDomain) {
+		if strings.TrimSpace(c.ClientID) == "" {
+			return fmt.Errorf("Shopify client missing client ID for shop domain %s", c.StoreDomain)
+		}
+		req.SetBasicAuth(c.ClientID, c.AccessToken)
+	} else {
+		req.Header.Set("X-Shopify-Access-Token", c.AccessToken)
+	}
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -91,4 +100,8 @@ func (c *ShopifyClient) MarkOrderPaid(ctx context.Context, orderID int64, amount
 	}
 
 	return nil
+}
+
+func requiresShopifyClientID(shopDomain string) bool {
+	return strings.EqualFold(strings.TrimSpace(shopDomain), "lockoutsupplements2.myshopify.com")
 }

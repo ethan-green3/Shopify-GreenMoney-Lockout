@@ -16,6 +16,7 @@ type ShopifyClientRegistry struct {
 
 type shopifyStoreEnvConfig struct {
 	AccessToken string `json:"access_token"`
+	ClientID    string `json:"client_id"`
 	APIVersion  string `json:"api_version"`
 }
 
@@ -30,8 +31,8 @@ func NewShopifyClientRegistryFromEnv() (*ShopifyClientRegistry, error) {
 	defaultVersion := strings.TrimSpace(os.Getenv("SHOPIFY_API_VERSION"))
 	registry := NewShopifyClientRegistry(defaultVersion)
 
-	registerStoreFromEnv(registry, "SHOPIFY_STORE_DOMAIN", "SHOPIFY_ACCESS_TOKEN", defaultVersion)
-	registerStoreFromEnv(registry, "SHOPIFY_STORE_DOMAIN2", "SHOPIFY_ACCESS_TOKEN2", defaultVersion)
+	registerStoreFromEnv(registry, "SHOPIFY_STORE_DOMAIN", "SHOPIFY_ACCESS_TOKEN", "", defaultVersion)
+	registerStoreFromEnv(registry, "SHOPIFY_STORE_DOMAIN2", "SHOPIFY_ACCESS_TOKEN2", "SHOPIFY_STORE_CLIENTID_2", defaultVersion)
 
 	rawConfigs := strings.TrimSpace(os.Getenv("SHOPIFY_STORE_CONFIGS"))
 	if rawConfigs == "" {
@@ -58,7 +59,11 @@ func NewShopifyClientRegistryFromEnv() (*ShopifyClientRegistry, error) {
 			return nil, fmt.Errorf("missing access_token for Shopify store %s", normalizedDomain)
 		}
 
-		registry.Register(NewShopifyClient(normalizedDomain, cfg.AccessToken, apiVersion))
+		client := NewShopifyClient(normalizedDomain, cfg.AccessToken, apiVersion)
+		if requiresShopifyClientID(normalizedDomain) {
+			client.ClientID = strings.TrimSpace(cfg.ClientID)
+		}
+		registry.Register(client)
 	}
 
 	return registry, nil
@@ -109,12 +114,16 @@ func normalizeShopDomain(v string) string {
 	return strings.ToLower(strings.TrimSpace(v))
 }
 
-func registerStoreFromEnv(registry *ShopifyClientRegistry, domainEnv, tokenEnv, defaultVersion string) {
+func registerStoreFromEnv(registry *ShopifyClientRegistry, domainEnv, tokenEnv, clientIDEnv, defaultVersion string) {
 	domain := normalizeShopDomain(os.Getenv(domainEnv))
 	token := strings.TrimSpace(os.Getenv(tokenEnv))
 	if domain == "" || token == "" {
 		return
 	}
 
-	registry.Register(NewShopifyClient(domain, token, defaultVersion))
+	client := NewShopifyClient(domain, token, defaultVersion)
+	if requiresShopifyClientID(domain) && clientIDEnv != "" {
+		client.ClientID = strings.TrimSpace(os.Getenv(clientIDEnv))
+	}
+	registry.Register(client)
 }

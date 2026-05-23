@@ -137,7 +137,7 @@ func TestMoneyEUWebhookHandlerFailedFlowMarksFailureForScopedOrder(t *testing.T)
 
 	MoneyEUWebhookHandler(db, fakeResolver{t: t, wantDomain: "unused", payer: &fakePayer{}}).ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusOK || rr.Body.String() != "okok" {
+	if rr.Code != http.StatusOK || rr.Body.String() != "ok" {
 		t.Fatalf("unexpected response: %d %q", rr.Code, rr.Body.String())
 	}
 	if err := state.Verify(); err != nil {

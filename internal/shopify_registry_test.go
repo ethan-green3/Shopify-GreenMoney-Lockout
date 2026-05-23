@@ -6,8 +6,9 @@ func TestNewShopifyClientRegistryFromEnvLoadsPrimaryAndSecondaryStores(t *testin
 	t.Setenv("SHOPIFY_API_VERSION", "2024-10")
 	t.Setenv("SHOPIFY_STORE_DOMAIN", "primary.myshopify.com")
 	t.Setenv("SHOPIFY_ACCESS_TOKEN", "token-1")
-	t.Setenv("SHOPIFY_STORE_DOMAIN2", "secondary.myshopify.com")
+	t.Setenv("SHOPIFY_STORE_DOMAIN2", "lockoutsupplements2.myshopify.com")
 	t.Setenv("SHOPIFY_ACCESS_TOKEN2", "token-2")
+	t.Setenv("SHOPIFY_STORE_CLIENTID_2", "client-2")
 	t.Setenv("SHOPIFY_STORE_CONFIGS", "")
 
 	registry, err := NewShopifyClientRegistryFromEnv()
@@ -23,11 +24,11 @@ func TestNewShopifyClientRegistryFromEnvLoadsPrimaryAndSecondaryStores(t *testin
 		t.Fatalf("unexpected primary client: %+v", primary)
 	}
 
-	secondary, err := registry.ForShopDomain("secondary.myshopify.com")
+	secondary, err := registry.ForShopDomain("lockoutsupplements2.myshopify.com")
 	if err != nil {
 		t.Fatalf("lookup secondary store: %v", err)
 	}
-	if secondary.AccessToken != "token-2" || secondary.APIVersion != "2024-10" {
+	if secondary.AccessToken != "token-2" || secondary.ClientID != "client-2" || secondary.APIVersion != "2024-10" {
 		t.Fatalf("unexpected secondary client: %+v", secondary)
 	}
 }
