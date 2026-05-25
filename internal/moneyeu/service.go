@@ -6,10 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"Shopify-GreenMoney-Lockout/internal/email"
 )
@@ -51,38 +49,39 @@ type frankfurterLatestResponse struct {
 	Rates map[string]float64 `json:"rates"`
 }
 
-func fetchUSDEURRate(ctx context.Context) (float64, error) {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
+/*
+	func fetchUSDEURRate(ctx context.Context) (float64, error) {
+		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.frankfurter.dev/v1/latest?base=USD&symbols=EUR", nil)
-	if err != nil {
-		return 0, fmt.Errorf("build exchange-rate request: %w", err)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.frankfurter.dev/v1/latest?base=USD&symbols=EUR", nil)
+		if err != nil {
+			return 0, fmt.Errorf("build exchange-rate request: %w", err)
+		}
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return 0, fmt.Errorf("fetch exchange rate: %w", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return 0, fmt.Errorf("exchange-rate API returned status %s", resp.Status)
+		}
+
+		var data frankfurterLatestResponse
+		if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+			return 0, fmt.Errorf("decode exchange-rate response: %w", err)
+		}
+
+		rate, ok := data.Rates["EUR"]
+		if !ok || rate <= 0 {
+			return 0, fmt.Errorf("EUR rate missing or invalid in exchange-rate response")
+		}
+
+		return rate, nil
 	}
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return 0, fmt.Errorf("fetch exchange rate: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return 0, fmt.Errorf("exchange-rate API returned status %s", resp.Status)
-	}
-
-	var data frankfurterLatestResponse
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return 0, fmt.Errorf("decode exchange-rate response: %w", err)
-	}
-
-	rate, ok := data.Rates["EUR"]
-	if !ok || rate <= 0 {
-		return 0, fmt.Errorf("EUR rate missing or invalid in exchange-rate response")
-	}
-
-	return rate, nil
-}
-
+*/
 func (s *Service) HandleShopifyOrderJSON(ctx context.Context, raw []byte, shopDomain string) error {
 	var o ShopifyOrderLite
 	if err := json.Unmarshal(raw, &o); err != nil {
@@ -98,16 +97,16 @@ func (s *Service) HandleShopifyOrderJSON(ctx context.Context, raw []byte, shopDo
 		return fmt.Errorf("parse total_price %q: %w", o.TotalPrice, err)
 	}
 	// MoneyEU expects the charge amount in EUR, while Shopify order totals are USD.
-
-	usdToEURRate, err := fetchUSDEURRate(ctx)
-	if err != nil {
-		// Keep a conservative fallback so a temporary rate API outage does not break order creation.
-		// Update this fallback occasionally or replace it with a DB-stored last-known-good rate.
-		log.Printf("MoneyEU: failed to fetch USD->EUR exchange rate, using fallback %.6f: %v", fallbackUSDEURRate, err)
-		usdToEURRate = fallbackUSDEURRate
-	}
-	convertedAmount := amount * usdToEURRate
-
+	/*
+		usdToEURRate, err := fetchUSDEURRate(ctx)
+		if err != nil {
+			// Keep a conservative fallback so a temporary rate API outage does not break order creation.
+			// Update this fallback occasionally or replace it with a DB-stored last-known-good rate.
+			log.Printf("MoneyEU: failed to fetch USD->EUR exchange rate, using fallback %.6f: %v", fallbackUSDEURRate, err)
+			usdToEURRate = fallbackUSDEURRate
+		}
+		convertedAmount := amount * usdToEURRate
+	*/
 	// choose address
 	addr := o.ShippingAddress
 	if addr == nil {
@@ -898,7 +897,7 @@ func (s *Service) HandleShopifyOrderJSON(ctx context.Context, raw []byte, shopDo
 	log.Printf("MoneyEU: inserted payment id=%d for order %s", paymentID, o.Name)
 	// 2) Create MoneyEU order
 	req := CreateOrderExtRequest{
-		Amount:          convertedAmount,
+		Amount:          amount,
 		Currency:        o.Currency,
 		Name:            fallback(customerName, "Customer"),
 		Mail:            o.Email,
