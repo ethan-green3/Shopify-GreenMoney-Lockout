@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"Shopify-GreenMoney-Lockout/internal/email"
 )
@@ -49,8 +51,6 @@ type frankfurterLatestResponse struct {
 	Rates map[string]float64 `json:"rates"`
 }
 
-/*
-
 func fetchUSDEURRate(ctx context.Context) (float64, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -82,7 +82,6 @@ func fetchUSDEURRate(ctx context.Context) (float64, error) {
 
 	return rate, nil
 }
-*/
 
 func (s *Service) HandleShopifyOrderJSON(ctx context.Context, raw []byte, shopDomain string) error {
 	var o ShopifyOrderLite
@@ -99,16 +98,16 @@ func (s *Service) HandleShopifyOrderJSON(ctx context.Context, raw []byte, shopDo
 		return fmt.Errorf("parse total_price %q: %w", o.TotalPrice, err)
 	}
 	// MoneyEU expects the charge amount in EUR, while Shopify order totals are USD.
-	/*
-		usdToEURRate, err := fetchUSDEURRate(ctx)
-		if err != nil {
-			// Keep a conservative fallback so a temporary rate API outage does not break order creation.
-			// Update this fallback occasionally or replace it with a DB-stored last-known-good rate.
-			log.Printf("MoneyEU: failed to fetch USD->EUR exchange rate, using fallback %.6f: %v", fallbackUSDEURRate, err)
-			usdToEURRate = fallbackUSDEURRate
-		}
-		convertedAmount := amount * usdToEURRate
-	*/
+
+	usdToEURRate, err := fetchUSDEURRate(ctx)
+	if err != nil {
+		// Keep a conservative fallback so a temporary rate API outage does not break order creation.
+		// Update this fallback occasionally or replace it with a DB-stored last-known-good rate.
+		log.Printf("MoneyEU: failed to fetch USD->EUR exchange rate, using fallback %.6f: %v", fallbackUSDEURRate, err)
+		usdToEURRate = fallbackUSDEURRate
+	}
+	convertedAmount := amount * usdToEURRate
+
 	// choose address
 	addr := o.ShippingAddress
 	if addr == nil {
@@ -880,8 +879,8 @@ func (s *Service) HandleShopifyOrderJSON(ctx context.Context, raw []byte, shopDo
 		dialCode = "+263"
 
 	}
-
-	//o.Currency = "EUR"
+	// FOR EUR PROCESSOR
+	o.Currency = "EUR"
 	// 1) Insert DB row first
 	paymentID, err := InsertMoneyEUPayment(s.DB, PaymentRow{
 		ShopDomain:       o.ShopDomain,
@@ -899,7 +898,7 @@ func (s *Service) HandleShopifyOrderJSON(ctx context.Context, raw []byte, shopDo
 	log.Printf("MoneyEU: inserted payment id=%d for order %s", paymentID, o.Name)
 	// 2) Create MoneyEU order
 	req := CreateOrderExtRequest{
-		Amount:          amount,
+		Amount:          convertedAmount,
 		Currency:        o.Currency,
 		Name:            fallback(customerName, "Customer"),
 		Mail:            o.Email,
