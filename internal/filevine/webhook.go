@@ -67,5 +67,5 @@ func callMedsWebhookInZapier(collectionItemUpdated CollectionItemUpdated) {
 		return
 	}
 	defer res.Body.Close()
-	log.Println("Filevine collectionItemUpdated response", res)
+	log.Println("Filevine collectionItemUpdated response", res.StatusCode)
 }
