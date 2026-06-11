@@ -3,6 +3,7 @@ package main
 import (
 	"Shopify-GreenMoney-Lockout/internal"
 	"Shopify-GreenMoney-Lockout/internal/email"
+	"Shopify-GreenMoney-Lockout/internal/filevine"
 	"Shopify-GreenMoney-Lockout/internal/moneyeu"
 	"context"
 	"encoding/json"
@@ -91,31 +92,7 @@ func main() {
 		fmt.Fprintln(w, "ok")
 	})
 
-	mux.HandleFunc("/filevine/collection-item-updated", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		type ObjectID struct {
-			ProjectTypeID   int64  `json:"ProjectTypeId"`
-			SectionSelector string `json:"SectionSelector"`
-			ItemID          string `json:"ItemId"`
-		}
-		type CollectionItemUpdated struct {
-			ObjectID  ObjectID       `json:"ObjectId"`
-			Other     map[string]any `json:"Other"`
-			Timestamp int64          `json:"Timestamp"`
-			Object    string         `json:"Object"`
-			Event     string         `json:"Event"`
-			OrgID     int64          `json:"OrgId"`
-			ProjectID int64          `json:"ProjectId"`
-			UserID    int64          `json:"UserId"`
-			UserType  string         `json:"UserType"`
-		}
-		var collectionItemUpdated CollectionItemUpdated
-		if err := json.NewDecoder(r.Body).Decode(&collectionItemUpdated); err != nil {
-			log.Println("Filevine collectionItemUpdated error", err)
-			return
-		}
-		log.Println("Filevine collectionItemUpdated Payload ", collectionItemUpdated)
-	})
+	mux.HandleFunc("/filevine/collection-item-updated", filevine.CollectionItemUpdatedHandler)
 
 	mux.HandleFunc("/webhooks/moneyeu", moneyeu.MoneyEUWebhookHandler(db, moneyeuShopifyResolver{registry: shopifyRegistry}))
 
