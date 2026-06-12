@@ -3,7 +3,6 @@ package main
 import (
 	"Shopify-GreenMoney-Lockout/internal"
 	"Shopify-GreenMoney-Lockout/internal/email"
-	"Shopify-GreenMoney-Lockout/internal/filevine"
 	"Shopify-GreenMoney-Lockout/internal/moneyeu"
 	"context"
 	"encoding/json"
@@ -91,8 +90,6 @@ func main() {
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintln(w, "ok")
 	})
-
-	mux.HandleFunc("/filevine/collection-item-updated", filevine.CollectionItemUpdatedHandler)
 
 	mux.HandleFunc("/webhooks/moneyeu", moneyeu.MoneyEUWebhookHandler(db, moneyeuShopifyResolver{registry: shopifyRegistry}))
 
