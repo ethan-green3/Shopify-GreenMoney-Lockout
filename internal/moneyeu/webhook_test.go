@@ -51,7 +51,7 @@ func TestMoneyEUWebhookHandlerPaidFlowUsesShopScopedLookup(t *testing.T) {
 		{
 			Kind:          "exec",
 			QueryContains: "UPDATE money_eu_payments SET",
-			Args:          []any{"paid", `{"content":{"idOrderExt":"123","status":"paid"}}`, "secondary.myshopify.com", "123"},
+			Args:          []any{"success", `{"transaction_id":247201,"orderidext":"123","response_message":"Payment successful","paid_amount":49.99,"currency":"USD","transaction_id_ref":"abc","status":"Success"}`, "secondary.myshopify.com", "123"},
 			RowsAffected:  1,
 		},
 		{
@@ -87,7 +87,7 @@ func TestMoneyEUWebhookHandlerPaidFlowUsesShopScopedLookup(t *testing.T) {
 		payer:      payer,
 	}
 
-	body := []byte(`{"content":{"idOrderExt":"123","status":"paid"}}`)
+	body := []byte(`{"transaction_id":247201,"orderidext":"123","response_message":"Payment successful","paid_amount":49.99,"currency":"USD","transaction_id_ref":"abc","status":"Success"}`)
 	req := httptest.NewRequest(http.MethodPost, "/webhooks/moneyeu", bytes.NewReader(body))
 	rr := httptest.NewRecorder()
 
@@ -116,13 +116,13 @@ func TestMoneyEUWebhookHandlerFailedFlowMarksFailureForScopedOrder(t *testing.T)
 		{
 			Kind:          "exec",
 			QueryContains: "UPDATE money_eu_payments SET",
-			Args:          []any{"failed", `{"message":"declined","content":{"idOrderExt":"123","status":"failed"}}`, "secondary.myshopify.com", "123"},
+			Args:          []any{"declined", `{"transaction_id":247202,"orderidext":"123","response_message":"30: Invalid Card","paid_amount":2,"currency":"USD","transaction_id_ref":"0","status":"Declined"}`, "secondary.myshopify.com", "123"},
 			RowsAffected:  1,
 		},
 		{
 			Kind:          "exec",
 			QueryContains: "UPDATE money_eu_payments SET status='failed'",
-			Args:          []any{"secondary.myshopify.com", "123", "declined"},
+			Args:          []any{"secondary.myshopify.com", "123", "30: Invalid Card"},
 			RowsAffected:  1,
 		},
 	})
@@ -131,7 +131,7 @@ func TestMoneyEUWebhookHandlerFailedFlowMarksFailureForScopedOrder(t *testing.T)
 	}
 	defer db.Close()
 
-	body := []byte(`{"message":"declined","content":{"idOrderExt":"123","status":"failed"}}`)
+	body := []byte(`{"transaction_id":247202,"orderidext":"123","response_message":"30: Invalid Card","paid_amount":2,"currency":"USD","transaction_id_ref":"0","status":"Declined"}`)
 	req := httptest.NewRequest(http.MethodPost, "/webhooks/moneyeu", bytes.NewReader(body))
 	rr := httptest.NewRecorder()
 
@@ -139,6 +139,45 @@ func TestMoneyEUWebhookHandlerFailedFlowMarksFailureForScopedOrder(t *testing.T)
 
 	if rr.Code != http.StatusOK || rr.Body.String() != "ok" {
 		t.Fatalf("unexpected response: %d %q", rr.Code, rr.Body.String())
+	}
+	if err := state.Verify(); err != nil {
+		t.Fatalf("db expectations not met: %v", err)
+	}
+}
+
+func TestMoneyEUWebhookHandlerProcessFlowStoresEventOnly(t *testing.T) {
+	db, state, err := testsql.Open([]testsql.Expectation{
+		{
+			Kind:          "query",
+			QueryContains: "SELECT shop_domain, amount, currency, shopify_order_id FROM money_eu_payments WHERE shopify_order_id = $1",
+			Args:          []any{"123"},
+			Columns:       []string{"shop_domain", "amount", "currency", "shopify_order_id"},
+			Rows:          [][]driver.Value{{"secondary.myshopify.com", float64(49.99), "USD", "123"}},
+		},
+		{
+			Kind:          "exec",
+			QueryContains: "UPDATE money_eu_payments SET",
+			Args:          []any{"process", `{"transaction_id":247203,"orderidext":"123","response_message":"Processing","paid_amount":0,"currency":"USD","transaction_id_ref":"0","status":"Process"}`, "secondary.myshopify.com", "123"},
+			RowsAffected:  1,
+		},
+	})
+	if err != nil {
+		t.Fatalf("open testsql db: %v", err)
+	}
+	defer db.Close()
+
+	payer := &fakePayer{}
+	body := []byte(`{"transaction_id":247203,"orderidext":"123","response_message":"Processing","paid_amount":0,"currency":"USD","transaction_id_ref":"0","status":"Process"}`)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/moneyeu", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+
+	MoneyEUWebhookHandler(db, fakeResolver{t: t, wantDomain: "unused", payer: payer}).ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK || rr.Body.String() != "ok" {
+		t.Fatalf("unexpected response: %d %q", rr.Code, rr.Body.String())
+	}
+	if payer.called {
+		t.Fatal("did not expect Shopify mark-paid call for Process status")
 	}
 	if err := state.Verify(); err != nil {
 		t.Fatalf("db expectations not met: %v", err)

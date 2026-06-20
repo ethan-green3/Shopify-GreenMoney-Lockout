@@ -69,9 +69,10 @@ func main() {
 		log.Fatalf("Missing env variables: %s", err)
 	}
 	moneySvc := &moneyeu.Service{
-		DB:     db,
-		Client: moneyClient,
-		SMTP:   smtpCfg,
+		DB:        db,
+		Client:    moneyClient,
+		SMTP:      smtpCfg,
+		ReturnURL: os.Getenv("MONEYEU_RETURN_URL"),
 	}
 
 	ctx := context.Background()

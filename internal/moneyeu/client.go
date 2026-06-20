@@ -3,27 +3,20 @@ package moneyeu
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 )
 
 type Client struct {
-	BaseURL     string
-	APIKey      string
-	APISecret   string
-	HTTP        *http.Client
-	Path        string
-	ServiceName string
+	BaseURL   string
+	APIKey    string
+	APISecret string
+	HTTP      *http.Client
+	Path      string
 }
 
 func NewClient(baseURL, apiKey, apiSecret string) (*Client, error) {
@@ -31,40 +24,25 @@ func NewClient(baseURL, apiKey, apiSecret string) (*Client, error) {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 
 	client := Client{
-		BaseURL:     baseURL,
-		APIKey:      strings.TrimSpace(apiKey),
-		APISecret:   strings.TrimSpace(apiSecret),
-		HTTP:        &http.Client{Timeout: 20 * time.Second},
-		Path:        "/api/createOrderExt",
-		ServiceName: "createOrderExt",
+		BaseURL:   baseURL,
+		APIKey:    strings.TrimSpace(apiKey),
+		APISecret: strings.TrimSpace(apiSecret),
+		HTTP:      &http.Client{Timeout: 20 * time.Second},
+		Path:      "/api/payment/card/s2s",
 	}
 
-	if client.APIKey == "" || client.APISecret == "" || client.BaseURL == "" {
-		return nil, fmt.Errorf("MISSING ONE OF: API KEY: %s - API SECRET %s - BASE URL: %s", client.APIKey, client.APISecret, client.BaseURL)
+	if client.APIKey == "" || client.BaseURL == "" {
+		return nil, fmt.Errorf("missing MoneyEU API key or base URL")
 	}
 
 	return &client, nil
 }
 
-func (c *Client) CreateOrderExt(ctx context.Context, req CreateOrderExtRequest) (*CreateOrderExtResponse, error) {
-	// Must be compact JSON (json.Marshal is compact by default)
+func (c *Client) CreatePaymentS2S(ctx context.Context, req PaymentS2SRequest) (*PaymentS2SResponse, error) {
 	bodyBytes, err := json.Marshal(req)
 	if err != nil {
-		return nil, fmt.Errorf("marshal createOrderExt: %w", err)
+		return nil, fmt.Errorf("marshal card/s2s payment: %w", err)
 	}
-	bodyStr := string(bodyBytes)
-	//log.Println("Body string:", bodyStr)
-	// Generate a per-request random salt (recommended)
-	salt, err := randomSaltHex(16) // 32 hex chars
-	if err != nil {
-		return nil, fmt.Errorf("salt: %w", err)
-	}
-
-	// Unix seconds per docs
-	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
-
-	// Signature per docs: Base64(HMAC-SHA256(secret, serviceName+salt+apiKey+timestamp+body))
-	sig := buildSignature(c.ServiceName, salt, c.APIKey, timestamp, bodyStr, c.APISecret)
 
 	url := c.BaseURL + c.Path
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
@@ -73,22 +51,10 @@ func (c *Client) CreateOrderExt(ctx context.Context, req CreateOrderExtRequest) 
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("accept", "*/*") // they show */* in docs
+	httpReq.Header.Set("Accept", "application/json")
 	httpReq.Header.Set("apiKey", c.APIKey)
-	httpReq.Header.Set("salt", salt)
-	httpReq.Header.Set("timestamp", timestamp)
-	httpReq.Header.Set("signature", sig)
-	//log.Printf("MoneyEU request: %s %s", httpReq.Method, httpReq.URL.String())
-	//log.Printf("MoneyEU headers: apikey_set=%t salt=%q timestamp=%q signature_len=%s",
-	//	c.APIKey != "",
-	//	salt,
-	//	timestamp,
-	//	sig,
-	//	)
-	//log.Printf("MoneyEU body: %s", bodyStr)
 
 	resp, err := c.HTTP.Do(httpReq)
-
 	if err != nil {
 		return nil, fmt.Errorf("do request: %w", err)
 	}
@@ -98,13 +64,11 @@ func (c *Client) CreateOrderExt(ctx context.Context, req CreateOrderExtRequest) 
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
-	//log.Printf("MoneyEU HTTP status=%s content-type=%q len=%d", resp.Status, resp.Header.Get("Content-Type"), len(raw))
 	if len(raw) == 0 {
-		// Return a clearer error with status + key headers
 		return nil, fmt.Errorf("moneyEU empty response body: status=%s content-type=%q", resp.Status, resp.Header.Get("Content-Type"))
 	}
 
-	var out CreateOrderExtResponse
+	var out PaymentS2SResponse
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, fmt.Errorf("decode response: %w; raw=%s", err, string(raw))
 	}
@@ -114,22 +78,4 @@ func (c *Client) CreateOrderExt(ctx context.Context, req CreateOrderExtRequest) 
 	}
 
 	return &out, nil
-}
-
-func buildSignature(serviceName, salt, apiKey, timestamp, bodyStr, secretKey string) string {
-	msg := serviceName + salt + apiKey + timestamp + bodyStr
-
-	mac := hmac.New(sha256.New, []byte(secretKey))
-	_, _ = mac.Write([]byte(msg))
-	sum := mac.Sum(nil)
-
-	return base64.StdEncoding.EncodeToString(sum)
-}
-
-func randomSaltHex(nBytes int) (string, error) {
-	b := make([]byte, nBytes)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(b), nil
 }

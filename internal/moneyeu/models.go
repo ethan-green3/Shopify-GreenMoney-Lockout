@@ -1,34 +1,32 @@
 package moneyeu
 
-import "encoding/json"
-
-type CreateOrderExtRequest struct {
-	Amount          float64 `json:"amount"`
-	Currency        string  `json:"currency"`
-	Name            string  `json:"name"`
-	Mail            string  `json:"mail"`
-	PhoneNumber     string  `json:"phoneNumber"`
-	DialCode        string  `json:"dialCode"`
-	Address         string  `json:"address"`
-	City            string  `json:"city"`
-	State           string  `json:"state"`
-	Zip             string  `json:"zip"`
-	Country         string  `json:"country"`
-	IdOrderExt      string  `json:"idOrderExt"`
-	Language        string  `json:"language"`
-	Sms             bool    `json:"sms"`
-	CustomerService string  `json:"customerService"`
+type PaymentS2SRequest struct {
+	Amount           string `json:"amount"`
+	Currency         string `json:"currency"`
+	OrderDescription string `json:"orderDescription"`
+	Name             string `json:"name"`
+	FirstName        string `json:"firstName"`
+	LastName         string `json:"lastName"`
+	Mail             string `json:"mail"`
+	DialCode         string `json:"dialCode"`
+	PhoneNumber      string `json:"phoneNumber"`
+	Address          string `json:"address"`
+	Country          string `json:"country"`
+	State            string `json:"state"`
+	City             string `json:"city"`
+	Zip              string `json:"zip"`
+	Language         string `json:"language"`
+	Sms              bool   `json:"sms"`
+	CustomerService  string `json:"customerService"`
+	Date             string `json:"date"`
+	PaidDate         string `json:"paidDate"`
+	ReturnURL        string `json:"return_url"`
+	OrderIDExt       string `json:"orderidext"`
 }
 
-type CreateOrderExtResponse struct {
-	Status  string          `json:"status"`
-	Message string          `json:"message"`
-	Content json.RawMessage `json:"content"` // can be object OR array
-}
-
-type CreateOrderExtContent struct {
-	ID         int64  `json:"id"`
-	Status     string `json:"status"`
-	IdOrderExt string `json:"idOrderExt"`
-	Url        string `json:"url"`
+type PaymentS2SResponse struct {
+	TransactionID string `json:"transaction_id"`
+	ProcessingURL string `json:"processing_url"`
+	Message       string `json:"message"`
+	Status        string `json:"status"`
 }

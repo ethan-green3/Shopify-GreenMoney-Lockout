@@ -93,7 +93,7 @@ func MoneyEUWebhookHandler(db *sql.DB, shopifyResolver ShopifyResolver) http.Han
 
 		item, message, ok := parseMoneyEUWebhook(raw)
 		if !ok || item.OrderIDExt() == "" {
-			log.Printf("MoneyEU webhook missing idOrderExt")
+			log.Printf("MoneyEU webhook missing orderidext")
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte("ok"))
 			return
