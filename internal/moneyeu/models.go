@@ -22,6 +22,7 @@ type PaymentS2SRequest struct {
 	PaidDate         string `json:"paidDate"`
 	ReturnURL        string `json:"return_url"`
 	OrderIDExt       string `json:"orderidext"`
+	ExternalID       string `json:"ext_id"`
 }
 
 type PaymentS2SResponse struct {

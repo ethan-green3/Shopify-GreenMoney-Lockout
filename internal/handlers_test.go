@@ -206,7 +206,7 @@ func TestShopifyOrderCreateHandlerRoutesMoneyEUPath(t *testing.T) {
 	if rr.Code != http.StatusOK || rr.Body.String() != "moneyeu_email_sent" {
 		t.Fatalf("unexpected response: %d %q", rr.Code, rr.Body.String())
 	}
-	if gotReq.OrderIDExt != "123" || gotReq.Name != "John Buyer" || gotReq.Mail != "buyer@example.com" || gotReq.OrderDescription != "#1001" {
+	if gotReq.OrderIDExt != "123" || gotReq.ExternalID != "123" || gotReq.Name != "John Buyer" || gotReq.Mail != "buyer@example.com" || gotReq.OrderDescription != "#1001" {
 		t.Fatalf("unexpected MoneyEU request core fields: %+v", gotReq)
 	}
 	if gotReq.Amount != "49.99" || gotReq.Currency != "USD" || gotReq.ReturnURL != "https://store.test/orders/123" || gotReq.Language != "en" {

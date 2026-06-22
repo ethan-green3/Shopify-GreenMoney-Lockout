@@ -1,6 +1,7 @@
 package moneyeu
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -28,19 +29,24 @@ type webhookEnvelope struct {
 }
 
 type webhookContentItem struct {
-	ID              int64   `json:"id"`
-	Amount          float64 `json:"amount"`
-	Status          string  `json:"status"`
-	Date            string  `json:"date"`
-	IdOrderExt      string  `json:"idOrderExt"`
-	OrderIDExtAlt   string  `json:"orderidext"`
-	Currency        string  `json:"currency"`
-	ResponseCode    string  `json:"responseCode"`
-	ResponseMessage string  `json:"responseMessage"`
-	Url             string  `json:"url"`
+	ID              int64           `json:"id"`
+	Amount          float64         `json:"amount"`
+	Status          string          `json:"status"`
+	Date            string          `json:"date"`
+	IdOrderExt      string          `json:"idOrderExt"`
+	OrderIDExtAlt   string          `json:"orderidext"`
+	ExternalID      json.RawMessage `json:"ext_id"`
+	Currency        string          `json:"currency"`
+	ResponseCode    string          `json:"responseCode"`
+	ResponseMessage string          `json:"responseMessage"`
+	Url             string          `json:"url"`
 }
 
 func (w webhookContentItem) OrderIDExt() string {
+	if externalID := referenceID(w.ExternalID); externalID != "" {
+		return externalID
+	}
+
 	if strings.TrimSpace(w.IdOrderExt) != "" {
 		return strings.TrimSpace(w.IdOrderExt)
 	}
@@ -61,13 +67,14 @@ func (w webhookContentItem) Message() string {
 }
 
 type directMoneyEUWebhook struct {
-	TransactionID    int64   `json:"transaction_id"`
-	OrderIDExt       string  `json:"orderidext"`
-	ResponseMessage  string  `json:"response_message"`
-	PaidAmount       float64 `json:"paid_amount"`
-	Currency         string  `json:"currency"`
-	TransactionIDRef string  `json:"transaction_id_ref"`
-	Status           string  `json:"status"`
+	TransactionID    int64           `json:"transaction_id"`
+	OrderIDExt       string          `json:"orderidext"`
+	ExternalID       json.RawMessage `json:"ext_id"`
+	ResponseMessage  string          `json:"response_message"`
+	PaidAmount       float64         `json:"paid_amount"`
+	Currency         string          `json:"currency"`
+	TransactionIDRef string          `json:"transaction_id_ref"`
+	Status           string          `json:"status"`
 }
 
 func MoneyEUWebhookHandler(db *sql.DB, shopifyResolver ShopifyResolver) http.HandlerFunc {
@@ -93,7 +100,7 @@ func MoneyEUWebhookHandler(db *sql.DB, shopifyResolver ShopifyResolver) http.Han
 
 		item, message, ok := parseMoneyEUWebhook(raw)
 		if !ok || item.OrderIDExt() == "" {
-			log.Printf("MoneyEU webhook missing orderidext")
+			log.Printf("MoneyEU webhook missing ext_id/orderidext")
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte("ok"))
 			return
@@ -196,11 +203,12 @@ func MoneyEUWebhookHandler(db *sql.DB, shopifyResolver ShopifyResolver) http.Han
 func parseMoneyEUWebhook(raw []byte) (webhookContentItem, string, bool) {
 	var direct directMoneyEUWebhook
 	if err := json.Unmarshal(raw, &direct); err == nil {
-		if strings.TrimSpace(direct.OrderIDExt) != "" {
+		if strings.TrimSpace(direct.OrderIDExt) != "" || referenceID(direct.ExternalID) != "" {
 			return webhookContentItem{
 				ID:              direct.TransactionID,
 				Status:          direct.Status,
 				IdOrderExt:      direct.OrderIDExt,
+				ExternalID:      direct.ExternalID,
 				Amount:          direct.PaidAmount,
 				Currency:        direct.Currency,
 				ResponseMessage: direct.ResponseMessage,
@@ -227,6 +235,27 @@ func parseMoneyEUWebhook(raw []byte) (webhookContentItem, string, bool) {
 	return item, message, true
 }
 
+func referenceID(raw json.RawMessage) string {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return ""
+	}
+
+	var value string
+	if err := json.Unmarshal(raw, &value); err == nil {
+		return strings.TrimSpace(value)
+	}
+
+	var number json.Number
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&number); err == nil {
+		return strings.TrimSpace(number.String())
+	}
+
+	return ""
+}
+
 func extractContentItem(raw json.RawMessage) (webhookContentItem, bool) {
 	raw = json.RawMessage(strings.TrimSpace(string(raw)))
 	if len(raw) == 0 || string(raw) == "null" {
@@ -250,7 +279,7 @@ func extractContentItem(raw json.RawMessage) (webhookContentItem, bool) {
 
 func isPaidStatus(s string) bool {
 	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "captured", "paid", "completed", "success", "succeeded", "approved":
+	case "captured", "paid", "completed", "success", "succeeded", "approved", "transaction successful":
 		return true
 	default:
 		return false
@@ -259,7 +288,7 @@ func isPaidStatus(s string) bool {
 
 func isFailedStatus(s string) bool {
 	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "failed", "declined", "canceled", "cancelled", "error", "expired":
+	case "failed", "declined", "canceled", "cancelled", "error", "expired", "transaction failed":
 		return true
 	default:
 		return false

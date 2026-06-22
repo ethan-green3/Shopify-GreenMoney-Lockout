@@ -935,6 +935,7 @@ func (s *Service) HandleShopifyOrderJSON(ctx context.Context, raw []byte, shopDo
 		PaidDate:         now,
 		ReturnURL:        returnURL,
 		OrderIDExt:       orderIDExt,
+		ExternalID:       orderIDExt,
 	}
 	/*
 		log.Printf("Exchange rate for Order: %s is %.6f: USD: %.2f --> EUR %.2f\n", o.Name, usdToEURRate, amount, convertedAmount)

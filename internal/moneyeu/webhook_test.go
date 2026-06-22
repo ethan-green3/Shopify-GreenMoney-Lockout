@@ -51,7 +51,7 @@ func TestMoneyEUWebhookHandlerPaidFlowUsesShopScopedLookup(t *testing.T) {
 		{
 			Kind:          "exec",
 			QueryContains: "UPDATE money_eu_payments SET",
-			Args:          []any{"success", `{"transaction_id":247201,"orderidext":"123","response_message":"Payment successful","paid_amount":49.99,"currency":"USD","transaction_id_ref":"abc","status":"Success"}`, "secondary.myshopify.com", "123"},
+			Args:          []any{"transaction successful", `{"transaction_id":247201,"orderidext":"8848eefdd8","ext_id":"123","response_message":"0: Approved","paid_amount":49.99,"currency":"USD","transaction_id_ref":"abc","status":"Transaction Successful"}`, "secondary.myshopify.com", "123"},
 			RowsAffected:  1,
 		},
 		{
@@ -87,7 +87,7 @@ func TestMoneyEUWebhookHandlerPaidFlowUsesShopScopedLookup(t *testing.T) {
 		payer:      payer,
 	}
 
-	body := []byte(`{"transaction_id":247201,"orderidext":"123","response_message":"Payment successful","paid_amount":49.99,"currency":"USD","transaction_id_ref":"abc","status":"Success"}`)
+	body := []byte(`{"transaction_id":247201,"orderidext":"8848eefdd8","ext_id":"123","response_message":"0: Approved","paid_amount":49.99,"currency":"USD","transaction_id_ref":"abc","status":"Transaction Successful"}`)
 	req := httptest.NewRequest(http.MethodPost, "/webhooks/moneyeu", bytes.NewReader(body))
 	rr := httptest.NewRecorder()
 
