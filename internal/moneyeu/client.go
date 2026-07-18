@@ -72,8 +72,8 @@ func (c *Client) CreateCheckoutOrder(ctx context.Context, req ProcessPaymentRequ
 	httpReq.Header.Set("timestamp", timestamp)
 	httpReq.Header.Set("signature", signature)
 	httpReq.Header.Set("X-Flow-Type", "HPP")
-	httpReq.Header.Set("flowType", "HPP")
-	httpReq.Header.Set("isCheckout", "true")
+	httpReq.Header.Set("flowType", "S2S")
+	httpReq.Header.Set("isCheckout", "false")
 
 	resp, err := c.HTTP.Do(httpReq)
 	if err != nil {
