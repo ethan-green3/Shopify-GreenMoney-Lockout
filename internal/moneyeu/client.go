@@ -3,6 +3,11 @@ package moneyeu
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,12 +17,15 @@ import (
 )
 
 type Client struct {
-	BaseURL   string
-	APIKey    string
-	APISecret string
-	HTTP      *http.Client
-	Path      string
+	BaseURL           string
+	ProcessPaymentURL string
+	APIKey            string
+	APISecret         string
+	HTTP              *http.Client
+	Path              string
 }
+
+const moneyEUHMACServiceName = "moneyEuPayment"
 
 func NewClient(baseURL, apiKey, apiSecret string) (*Client, error) {
 	// Trim trailing slash so BaseURL + "/api/..." never produces "//api/..."
@@ -28,24 +36,31 @@ func NewClient(baseURL, apiKey, apiSecret string) (*Client, error) {
 		APIKey:    strings.TrimSpace(apiKey),
 		APISecret: strings.TrimSpace(apiSecret),
 		HTTP:      &http.Client{Timeout: 20 * time.Second},
-		Path:      "/api/payment/card/s2s",
+		Path:      "/moneyEu/api/v1/processPayment",
 	}
 
-	if client.APIKey == "" || client.BaseURL == "" {
-		return nil, fmt.Errorf("missing MoneyEU API key or base URL")
+	if client.APIKey == "" || client.APISecret == "" || client.BaseURL == "" {
+		return nil, fmt.Errorf("missing MoneyEU API key, secret, or base URL")
 	}
 
 	return &client, nil
 }
 
-func (c *Client) CreatePaymentS2S(ctx context.Context, req PaymentS2SRequest) (*PaymentS2SResponse, error) {
+func (c *Client) CreateCheckoutOrder(ctx context.Context, req ProcessPaymentRequest) (*ProcessPaymentResponse, error) {
 	bodyBytes, err := json.Marshal(req)
 	if err != nil {
-		return nil, fmt.Errorf("marshal card/s2s payment: %w", err)
+		return nil, fmt.Errorf("marshal checkout payment: %w", err)
 	}
 
-	url := c.BaseURL + c.Path
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
+	salt, err := generateSalt()
+	if err != nil {
+		return nil, fmt.Errorf("generate signature salt: %w", err)
+	}
+	timestamp := fmt.Sprintf("%d", time.Now().Unix())
+	signature := buildSignature(c.APISecret, salt, c.APIKey, timestamp, string(bodyBytes))
+
+	endpoint := c.endpoint()
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("new request: %w", err)
 	}
@@ -53,6 +68,12 @@ func (c *Client) CreatePaymentS2S(ctx context.Context, req PaymentS2SRequest) (*
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json")
 	httpReq.Header.Set("apiKey", c.APIKey)
+	httpReq.Header.Set("salt", salt)
+	httpReq.Header.Set("timestamp", timestamp)
+	httpReq.Header.Set("signature", signature)
+	httpReq.Header.Set("X-Flow-Type", "HPP")
+	httpReq.Header.Set("flowType", "HPP")
+	httpReq.Header.Set("isCheckout", "true")
 
 	resp, err := c.HTTP.Do(httpReq)
 	if err != nil {
@@ -67,8 +88,11 @@ func (c *Client) CreatePaymentS2S(ctx context.Context, req PaymentS2SRequest) (*
 	if len(raw) == 0 {
 		return nil, fmt.Errorf("moneyEU empty response body: status=%s content-type=%q", resp.Status, resp.Header.Get("Content-Type"))
 	}
+	if !json.Valid(raw) {
+		return nil, fmt.Errorf("moneyEU non-JSON response: status=%s content-type=%q raw=%s", resp.Status, resp.Header.Get("Content-Type"), string(raw))
+	}
 
-	var out PaymentS2SResponse
+	var out ProcessPaymentResponse
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, fmt.Errorf("decode response: %w; raw=%s", err, string(raw))
 	}
@@ -76,6 +100,42 @@ func (c *Client) CreatePaymentS2S(ctx context.Context, req PaymentS2SRequest) (*
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return &out, fmt.Errorf("moneyEU non-2xx: %s raw=%s", resp.Status, string(raw))
 	}
+	if !out.Success {
+		return &out, fmt.Errorf("moneyEU unsuccessful response: message=%q errorCode=%q", out.Message, out.ErrorCode)
+	}
 
 	return &out, nil
+}
+
+func (c *Client) endpoint() string {
+	if strings.TrimSpace(c.ProcessPaymentURL) != "" {
+		return strings.TrimSpace(c.ProcessPaymentURL)
+	}
+	return strings.TrimRight(strings.TrimSpace(c.BaseURL), "/") + NormalizePath(c.Path)
+}
+
+func NormalizePath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	if path[0] != '/' {
+		return "/" + path
+	}
+	return path
+}
+
+func generateSalt() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
+}
+
+func buildSignature(secretKey, salt, apiKey, timestamp, body string) string {
+	message := moneyEUHMACServiceName + salt + apiKey + timestamp + body
+	mac := hmac.New(sha256.New, []byte(secretKey))
+	mac.Write([]byte(message))
+	return base64.StdEncoding.EncodeToString(mac.Sum(nil))
 }

@@ -2,7 +2,10 @@ package internal
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
 	"database/sql/driver"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -12,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"Shopify-GreenMoney-Lockout/internal/email"
 	"Shopify-GreenMoney-Lockout/internal/moneyeu"
 	"Shopify-GreenMoney-Lockout/internal/testsql"
 )
@@ -125,13 +127,7 @@ func TestShopifyOrderCreateHandlerRoutesMoneyEUPath(t *testing.T) {
 		{
 			Kind:          "exec",
 			QueryContains: "UPDATE money_eu_payments",
-			Args:          []any{"987", "123", "https://checkout.test/123", "redirect", int64(77)},
-			RowsAffected:  1,
-		},
-		{
-			Kind:          "exec",
-			QueryContains: "UPDATE money_eu_payments SET email_sent_at=NOW()",
-			Args:          []any{int64(77)},
+			Args:          []any{"ORD-987", "123", "https://checkout.test/123", "Order created successfully", int64(77)},
 			RowsAffected:  1,
 		},
 	})
@@ -140,22 +136,34 @@ func TestShopifyOrderCreateHandlerRoutesMoneyEUPath(t *testing.T) {
 	}
 	defer db.Close()
 
-	var gotReq moneyeu.PaymentS2SRequest
-	var sentTo string
-	var sentSubject string
-	var sentBody string
+	var gotReq moneyeu.ProcessPaymentRequest
+	var gotBody string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/payment/card/s2s" {
+		if r.URL.Path != "/moneyEu/api/v1/processPayment" {
 			t.Fatalf("unexpected MoneyEU path: %s", r.URL.Path)
 		}
 		if r.Header.Get("apiKey") != "key" {
 			t.Fatalf("unexpected MoneyEU apiKey header: %q", r.Header.Get("apiKey"))
 		}
-		if err := json.NewDecoder(r.Body).Decode(&gotReq); err != nil {
+		if r.Header.Get("X-Flow-Type") != "HPP" || r.Header.Get("isCheckout") != "true" {
+			t.Fatalf("unexpected MoneyEU checkout headers: X-Flow-Type=%q isCheckout=%q", r.Header.Get("X-Flow-Type"), r.Header.Get("isCheckout"))
+		}
+		bodyBytes, _ := io.ReadAll(r.Body)
+		salt := r.Header.Get("salt")
+		timestamp := r.Header.Get("timestamp")
+		if salt == "" || len(salt) > 32 || timestamp == "" {
+			t.Fatalf("unexpected signing headers: salt=%q timestamp=%q", salt, timestamp)
+		}
+		expectedSignature := testMoneyEUSignature("secret", salt, "key", timestamp, string(bodyBytes))
+		if r.Header.Get("signature") != expectedSignature {
+			t.Fatalf("unexpected MoneyEU signature: got %q want %q", r.Header.Get("signature"), expectedSignature)
+		}
+		gotBody = string(bodyBytes)
+		if err := json.Unmarshal(bodyBytes, &gotReq); err != nil {
 			t.Fatalf("decode MoneyEU request: %v", err)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"transaction_id":"987","processing_url":"https://checkout.test/123","message":"Redirect the payer to processing_url to choose a payment method","status":"redirect"}`))
+		_, _ = w.Write([]byte(`{"success":true,"message":"Order created successfully","data":{"orderId":"ORD-987","checkoutToken":"tok-123","checkoutUrl":"https://checkout.test/123"}}`))
 	}))
 	defer server.Close()
 
@@ -166,15 +174,13 @@ func TestShopifyOrderCreateHandlerRoutesMoneyEUPath(t *testing.T) {
 			APIKey:    "key",
 			APISecret: "secret",
 			HTTP:      server.Client(),
-			Path:      "/api/payment/card/s2s",
+			Path:      "/moneyEu/api/v1/processPayment",
 		},
-		ReturnURL: "https://store.test/return",
-		EmailSender: func(_ email.SMTPConfig, to, subject, body string) error {
-			sentTo = to
-			sentSubject = subject
-			sentBody = body
-			return nil
-		},
+		ReturnURL:          "https://store.test/return",
+		CallbackURL:        "https://app.test/webhooks/moneyeu",
+		MerchantName:       "Lockout Supplements",
+		MerchantTerminalID: "12",
+		StoreFrontURL:      "https://store.test/checkout",
 	}
 
 	body, _ := json.Marshal(map[string]any{
@@ -184,7 +190,12 @@ func TestShopifyOrderCreateHandlerRoutesMoneyEUPath(t *testing.T) {
 		"total_price":           "49.99",
 		"currency":              "USD",
 		"order_status_url":      "https://store.test/orders/123",
+		"browser_ip":            "203.0.113.42",
 		"payment_gateway_names": []string{"Credit/Debit Card"},
+		"client_details": map[string]any{
+			"browser_ip": "203.0.113.43",
+			"user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+		},
 		"shipping_address": map[string]any{
 			"first_name":   "John",
 			"last_name":    "Buyer",
@@ -203,27 +214,40 @@ func TestShopifyOrderCreateHandlerRoutesMoneyEUPath(t *testing.T) {
 
 	ShopifyOrderCreateHandler(db, nil, moneySvc).ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusOK || rr.Body.String() != "moneyeu_email_sent" {
+	if rr.Code != http.StatusOK || rr.Body.String() != "moneyeu_checkout_created" {
 		t.Fatalf("unexpected response: %d %q", rr.Code, rr.Body.String())
 	}
-	if gotReq.OrderIDExt != "123" || gotReq.ExternalID != "123" || gotReq.Name != "John Buyer" || gotReq.Mail != "buyer@example.com" || gotReq.OrderDescription != "#1001" {
+	if gotReq.OrderIDExt != "" || gotReq.ExternalID != "" || gotReq.CustomerName != "John Buyer" || gotReq.CustomerEmail != "buyer@example.com" || gotReq.Service != "" || gotReq.Language != "" {
 		t.Fatalf("unexpected MoneyEU request core fields: %+v", gotReq)
 	}
-	if gotReq.Amount != "49.99" || gotReq.Currency != "USD" || gotReq.ReturnURL != "https://store.test/orders/123" || gotReq.Language != "en" {
+	if gotReq.Amount != 49.99 || gotReq.Currency != "USD" || gotReq.RedirectURL != "https://store.test/orders/123" || gotReq.CallbackURL != "https://app.test/webhooks/moneyeu" || gotReq.MerchantName != "Lockout Supplements" {
 		t.Fatalf("unexpected MoneyEU payment fields: %+v", gotReq)
 	}
-	if gotReq.FirstName != "John" || gotReq.LastName != "Buyer" || gotReq.PhoneNumber != "5551234567" || gotReq.Address != "123 Main St" || gotReq.City != "Austin" || gotReq.State != "TX" || gotReq.Zip != "78701" {
+	if !strings.Contains(gotBody, `"merchantTerminalId":12`) {
+		t.Fatalf("expected numeric merchantTerminalId in body: %s", gotBody)
+	}
+	if gotReq.Phone != "+1 5551234567" || gotReq.Address != "123 Main St" || gotReq.City != "Austin" || gotReq.State != "TX" || gotReq.Zip != "78701" {
 		t.Fatalf("unexpected MoneyEU address fields: %+v", gotReq)
 	}
-	if gotReq.Country != "US" || gotReq.DialCode != "+1" {
+	if gotReq.CountryName != "United States" {
 		t.Fatalf("unexpected MoneyEU country fields: %+v", gotReq)
 	}
-	if sentTo != "buyer@example.com" || !strings.Contains(sentSubject, "#1001") || !strings.Contains(sentBody, "https://checkout.test/123") {
-		t.Fatalf("unexpected checkout email: to=%q subject=%q body=%q", sentTo, sentSubject, sentBody)
+	if gotReq.StoreFrontURL != "https://store.test/checkout" || gotReq.CustomerIPAddress != "203.0.113.42" || gotReq.CustomerUserAgent == "" {
+		t.Fatalf("unexpected MoneyEU compliance fields: %+v", gotReq)
+	}
+	if !strings.Contains(gotBody, `"storeFrontUrl":"https://store.test/checkout","customerIpAddress":"203.0.113.42","customerUserAgent":"Mozilla/5.0`) {
+		t.Fatalf("expected compliance fields at end of body: %s", gotBody)
 	}
 	if err := state.Verify(); err != nil {
 		t.Fatalf("db expectations not met: %v", err)
 	}
+}
+
+func testMoneyEUSignature(secretKey, salt, apiKey, timestamp, body string) string {
+	message := "moneyEuPayment" + salt + apiKey + timestamp + body
+	mac := hmac.New(sha256.New, []byte(secretKey))
+	mac.Write([]byte(message))
+	return base64.StdEncoding.EncodeToString(mac.Sum(nil))
 }
 
 func TestGreenIPNHandlerMarksPaidWithShopSpecificClient(t *testing.T) {

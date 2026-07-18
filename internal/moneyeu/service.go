@@ -8,7 +8,6 @@ import (
 	"log"
 	"strconv"
 	"strings"
-	"time"
 
 	"Shopify-GreenMoney-Lockout/internal/email"
 )
@@ -21,10 +20,17 @@ type ShopifyOrderLite struct {
 	TotalPrice          string   `json:"total_price"`
 	Currency            string   `json:"currency"`
 	OrderStatusURL      string   `json:"order_status_url"`
+	BrowserIP           string   `json:"browser_ip"`
 	PaymentGatewayNames []string `json:"payment_gateway_names"`
 
-	BillingAddress  *ShopifyAddressLite `json:"billing_address"`
-	ShippingAddress *ShopifyAddressLite `json:"shipping_address"`
+	BillingAddress  *ShopifyAddressLite       `json:"billing_address"`
+	ShippingAddress *ShopifyAddressLite       `json:"shipping_address"`
+	ClientDetails   *ShopifyClientDetailsLite `json:"client_details"`
+}
+
+type ShopifyClientDetailsLite struct {
+	BrowserIP string `json:"browser_ip"`
+	UserAgent string `json:"user_agent"`
 }
 
 type ShopifyAddressLite struct {
@@ -39,10 +45,17 @@ type ShopifyAddressLite struct {
 }
 
 type Service struct {
-	DB        *sql.DB
-	Client    *Client
-	SMTP      email.SMTPConfig
-	ReturnURL string
+	DB                     *sql.DB
+	Client                 *Client
+	SMTP                   email.SMTPConfig
+	ReturnURL              string
+	CallbackURL            string
+	MerchantName           string
+	MerchantTerminalID     string
+	StoreFrontURL          string
+	CustomerIPAddress      string
+	CustomerUserAgent      string
+	IncludeReferenceFields bool
 
 	EmailSender func(email.SMTPConfig, string, string, string) error
 }
@@ -888,6 +901,20 @@ func (s *Service) HandleShopifyOrderJSON(ctx context.Context, raw []byte, shopDo
 		dialCode = "+263"
 
 	}
+	callbackURL := strings.TrimSpace(s.CallbackURL)
+	if callbackURL == "" {
+		return fmt.Errorf("moneyeu: callback URL is required for hosted checkout reconciliation")
+	}
+	storeFrontURL := fallback(strings.TrimSpace(s.StoreFrontURL), "https://lockoutsupplements.com/checkout")
+	customerIP := fallback(firstNonBlank(o.BrowserIP, clientBrowserIP(o.ClientDetails)), strings.TrimSpace(s.CustomerIPAddress))
+	if customerIP == "" {
+		return fmt.Errorf("moneyeu: customer IP address is required for live processPayment requests")
+	}
+	customerUserAgent := fallback(clientUserAgent(o.ClientDetails), strings.TrimSpace(s.CustomerUserAgent))
+	if customerUserAgent == "" {
+		return fmt.Errorf("moneyeu: customer user agent is required for live processPayment requests")
+	}
+
 	// 1) Insert DB row first
 	paymentID, err := InsertMoneyEUPayment(s.DB, PaymentRow{
 		ShopDomain:       o.ShopDomain,
@@ -905,88 +932,97 @@ func (s *Service) HandleShopifyOrderJSON(ctx context.Context, raw []byte, shopDo
 	log.Printf("MoneyEU: inserted payment id=%d for order %s", paymentID, o.Name)
 	// 2) Create MoneyEU order
 	orderIDExt := strconv.FormatInt(o.ID, 10)
-	returnURL := fallback(strings.TrimSpace(o.OrderStatusURL), strings.TrimSpace(s.ReturnURL))
-	if returnURL == "" {
-		returnURL = "https://lockoutsupplements.com"
+	redirectURL := fallback(strings.TrimSpace(o.OrderStatusURL), strings.TrimSpace(s.ReturnURL))
+	if redirectURL == "" {
+		redirectURL = "https://lockoutsupplements.com"
 	}
-	if countryCode == "" {
-		countryCode = strings.ToUpper(strings.TrimSpace(country))
+	if strings.TrimSpace(country) == "" {
+		country = countryCode
 	}
-	now := time.Now().Format("2006-01-02T15:04:05.000-0700")
-	req := PaymentS2SRequest{
-		Amount:           fmt.Sprintf("%.2f", amount),
-		Currency:         o.Currency,
-		OrderDescription: fallback(o.Name, "Shopify order"),
-		Name:             fallback(customerName, "Customer"),
-		FirstName:        firstName,
-		LastName:         lastName,
-		Mail:             o.Email,
-		DialCode:         dialCode,
-		PhoneNumber:      customerPhone,
-		Address:          address1,
-		Country:          countryCode,
-		State:            state,
-		City:             city,
-		Zip:              zip,
-		Language:         "en",
-		Sms:              false,
-		CustomerService:  "glenn@lockoutforums.com",
-		Date:             now,
-		PaidDate:         now,
-		ReturnURL:        returnURL,
-		OrderIDExt:       orderIDExt,
-		ExternalID:       orderIDExt,
+	phone := strings.TrimSpace(customerPhone)
+	if phone != "" && dialCode != "" && !strings.HasPrefix(phone, "+") {
+		phone = strings.TrimSpace(dialCode + " " + phone)
+	}
+	req := ProcessPaymentRequest{
+		CustomerName:       fallback(customerName, "Customer"),
+		Address:            address1,
+		Zip:                zip,
+		MerchantTerminalID: merchantTerminalIDValue(s.MerchantTerminalID),
+		CallbackURL:        callbackURL,
+		RedirectURL:        redirectURL,
+		City:               city,
+		State:              state,
+		CountryName:        country,
+		CustomerEmail:      o.Email,
+		Phone:              phone,
+		Amount:             amount,
+		Currency:           strings.ToUpper(strings.TrimSpace(o.Currency)),
+		MerchantName:       fallback(strings.TrimSpace(s.MerchantName), "Lockout Supplements"),
+		StoreFrontURL:      storeFrontURL,
+		CustomerIPAddress:  customerIP,
+		CustomerUserAgent:  customerUserAgent,
+	}
+	if s.IncludeReferenceFields {
+		req.OrderIDExt = orderIDExt
+		req.ExternalID = orderIDExt
 	}
 	/*
 		log.Printf("Exchange rate for Order: %s is %.6f: USD: %.2f --> EUR %.2f\n", o.Name, usdToEURRate, amount, convertedAmount)
 	*/
-	log.Println("MoneyEU card/s2s payload:", req)
+	if payloadJSON, err := json.Marshal(req); err == nil {
+		log.Printf("MoneyEU hosted checkout payload JSON: %s", string(payloadJSON))
+	}
 
-	resp, err := s.Client.CreatePaymentS2S(ctx, req)
+	resp, err := s.Client.CreateCheckoutOrder(ctx, req)
 	if err != nil {
-		return fmt.Errorf("CreatePaymentS2S: %w", err)
+		return fmt.Errorf("CreateCheckoutOrder: %w", err)
 	}
-	if strings.TrimSpace(resp.TransactionID) == "" || strings.TrimSpace(resp.ProcessingURL) == "" {
-		return fmt.Errorf("CreatePaymentS2S: missing transaction_id or processing_url in response: %+v", resp)
+	if strings.TrimSpace(resp.Data.OrderID) == "" || strings.TrimSpace(resp.Data.CheckoutURL) == "" {
+		return fmt.Errorf("CreateCheckoutOrder: missing data.orderId or data.checkoutUrl in response: %+v", resp)
 	}
-	log.Println("MoneyEU: card/s2s response:", resp.TransactionID, resp.ProcessingURL, resp.Status)
+	log.Println("MoneyEU: hosted checkout response:", resp.Data.OrderID, resp.Data.CheckoutURL, resp.Message)
 
-	moneyEUOrderID := resp.TransactionID
-	checkoutURL := resp.ProcessingURL
-	status := resp.Status
+	moneyEUOrderID := resp.Data.OrderID
+	checkoutURL := resp.Data.CheckoutURL
+	status := fallback(resp.Data.TransactionStatus, resp.Message)
 
 	if err := SetMoneyEUOrderLink(s.DB, paymentID, moneyEUOrderID, orderIDExt, checkoutURL, status); err != nil {
 		return err
 	}
 
 	// 3) Email checkout link
-	if strings.TrimSpace(o.Email) == "" {
-		_ = MarkEmailFailed(s.DB, paymentID, "missing customer email")
-		return fmt.Errorf("email send: missing customer email")
-	}
+	// MoneyEU's hosted checkout flow emails the checkout link to the customer.
+	// Keep the old local SMTP fallback commented here in case we need to
+	// re-enable first-party email delivery.
+	/*
+		if strings.TrimSpace(o.Email) == "" {
+			_ = MarkEmailFailed(s.DB, paymentID, "missing customer email")
+			return fmt.Errorf("email send: missing customer email")
+		}
 
-	subject := fmt.Sprintf("Complete your payment for Order %s", o.Name)
-	body := fmt.Sprintf(
-		"Hi,\n\nThanks for your order with Lockout Supplements (%s).\n\n"+
-			"To complete payment, use the secure checkout link below:\n%s\n\n"+
-			"Amount due: %.2f %s\n\n"+
-			"If you have any issues, please reach out to glenn@lockoutforums.com for help.\n\n"+
-			"- Lockout Supplements\n",
-		o.Name, checkoutURL, amount, o.Currency,
-	)
+		subject := fmt.Sprintf("Complete your payment for Order %s", o.Name)
+		body := fmt.Sprintf(
+			"Hi,\n\nThanks for your order with Lockout Supplements (%s).\n\n"+
+				"To complete payment, use the secure checkout link below:\n%s\n\n"+
+				"Amount due: %.2f %s\n\n"+
+				"If you have any issues, please reach out to glenn@lockoutforums.com for help.\n\n"+
+				"- Lockout Supplements\n",
+			o.Name, checkoutURL, amount, o.Currency,
+		)
 
-	send := s.EmailSender
-	if send == nil {
-		send = email.Send
-	}
+		send := s.EmailSender
+		if send == nil {
+			send = email.Send
+		}
 
-	if err := send(s.SMTP, o.Email, subject, body); err != nil {
-		_ = MarkEmailFailed(s.DB, paymentID, err.Error())
-		return fmt.Errorf("email send: %w", err)
-	}
-	_ = MarkEmailSent(s.DB, paymentID)
+		if err := send(s.SMTP, o.Email, subject, body); err != nil {
+			_ = MarkEmailFailed(s.DB, paymentID, err.Error())
+			return fmt.Errorf("email send: %w", err)
+		}
+		_ = MarkEmailSent(s.DB, paymentID)
+	*/
 
-	log.Printf("MoneyEU: emailed checkout link for order %s", o.Name)
+	log.Printf("MoneyEU: hosted checkout created for order %s", o.Name)
 	return nil
 }
 
@@ -995,4 +1031,38 @@ func fallback(v, def string) string {
 		return def
 	}
 	return v
+}
+
+func merchantTerminalIDValue(v string) any {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return nil
+	}
+	if n, err := strconv.Atoi(v); err == nil {
+		return n
+	}
+	return v
+}
+
+func firstNonBlank(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func clientBrowserIP(details *ShopifyClientDetailsLite) string {
+	if details == nil {
+		return ""
+	}
+	return strings.TrimSpace(details.BrowserIP)
+}
+
+func clientUserAgent(details *ShopifyClientDetailsLite) string {
+	if details == nil {
+		return ""
+	}
+	return strings.TrimSpace(details.UserAgent)
 }

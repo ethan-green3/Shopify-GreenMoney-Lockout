@@ -26,23 +26,28 @@ type webhookEnvelope struct {
 	Status  string          `json:"status"`
 	Message string          `json:"message"`
 	Content json.RawMessage `json:"content"`
+	Data    json.RawMessage `json:"data"`
 }
 
 type webhookContentItem struct {
-	ID              int64           `json:"id"`
-	Amount          float64         `json:"amount"`
-	Status          string          `json:"status"`
-	Date            string          `json:"date"`
-	IdOrderExt      string          `json:"idOrderExt"`
-	OrderIDExtAlt   string          `json:"orderidext"`
-	ExternalID      json.RawMessage `json:"ext_id"`
-	Currency        string          `json:"currency"`
-	ResponseCode    string          `json:"responseCode"`
-	ResponseMessage string          `json:"responseMessage"`
-	Url             string          `json:"url"`
+	ID                int64           `json:"id"`
+	Amount            float64         `json:"amount"`
+	Status            string          `json:"status"`
+	Date              string          `json:"date"`
+	IdOrderExt        string          `json:"idOrderExt"`
+	OrderIDExtAlt     string          `json:"orderidext"`
+	ExternalID        json.RawMessage `json:"ext_id"`
+	OrderID           string          `json:"orderId"`
+	OrderIDAlt        string          `json:"order_id"`
+	TransactionID     string          `json:"transactionId"`
+	Currency          string          `json:"currency"`
+	ResponseCode      string          `json:"responseCode"`
+	ResponseMessage   string          `json:"responseMessage"`
+	TransactionStatus string          `json:"transactionStatus"`
+	Url               string          `json:"url"`
 }
 
-func (w webhookContentItem) OrderIDExt() string {
+func (w webhookContentItem) ShopifyReferenceID() string {
 	if externalID := referenceID(w.ExternalID); externalID != "" {
 		return externalID
 	}
@@ -52,6 +57,22 @@ func (w webhookContentItem) OrderIDExt() string {
 	}
 
 	return strings.TrimSpace(w.OrderIDExtAlt)
+}
+
+func (w webhookContentItem) MoneyEUOrderID() string {
+	if strings.TrimSpace(w.OrderID) != "" {
+		return strings.TrimSpace(w.OrderID)
+	}
+
+	return strings.TrimSpace(w.OrderIDAlt)
+}
+
+func (w webhookContentItem) LookupID() string {
+	if shopifyID := w.ShopifyReferenceID(); shopifyID != "" {
+		return shopifyID
+	}
+
+	return w.MoneyEUOrderID()
 }
 
 func (w webhookContentItem) Message() string {
@@ -67,14 +88,18 @@ func (w webhookContentItem) Message() string {
 }
 
 type directMoneyEUWebhook struct {
-	TransactionID    int64           `json:"transaction_id"`
-	OrderIDExt       string          `json:"orderidext"`
-	ExternalID       json.RawMessage `json:"ext_id"`
-	ResponseMessage  string          `json:"response_message"`
-	PaidAmount       float64         `json:"paid_amount"`
-	Currency         string          `json:"currency"`
-	TransactionIDRef string          `json:"transaction_id_ref"`
-	Status           string          `json:"status"`
+	TransactionID     int64           `json:"transaction_id"`
+	OrderIDExt        string          `json:"orderidext"`
+	ExternalID        json.RawMessage `json:"ext_id"`
+	ResponseMessage   string          `json:"response_message"`
+	PaidAmount        float64         `json:"paid_amount"`
+	Currency          string          `json:"currency"`
+	TransactionIDRef  string          `json:"transaction_id_ref"`
+	Status            string          `json:"status"`
+	OrderID           string          `json:"orderId"`
+	OrderIDAlt        string          `json:"order_id"`
+	TransactionIDNew  string          `json:"transactionId"`
+	TransactionStatus string          `json:"transactionStatus"`
 }
 
 func MoneyEUWebhookHandler(db *sql.DB, shopifyResolver ShopifyResolver) http.HandlerFunc {
@@ -99,23 +124,31 @@ func MoneyEUWebhookHandler(db *sql.DB, shopifyResolver ShopifyResolver) http.Han
 		log.Printf("MoneyEU webhook received: %s", string(raw))
 
 		item, message, ok := parseMoneyEUWebhook(raw)
-		if !ok || item.OrderIDExt() == "" {
-			log.Printf("MoneyEU webhook missing ext_id/orderidext")
+		if !ok || item.LookupID() == "" {
+			log.Printf("MoneyEU webhook missing ext_id/orderidext/orderId")
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte("ok"))
 			return
 		}
 
-		shopifyOrderID := item.OrderIDExt()
+		lookupID := item.LookupID()
+		shopifyOrderID := item.ShopifyReferenceID()
 		status := strings.ToLower(strings.TrimSpace(item.Status))
-
-		paymentInfo, err := GetMoneyEUPaymentInfoByOrderID(db, shopifyOrderID)
-		if err != nil {
-			log.Printf("MoneyEU webhook lookup error for order %s: %v", shopifyOrderID, err)
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("ok"))
-			return
+		if status == "" {
+			status = strings.ToLower(strings.TrimSpace(item.TransactionStatus))
 		}
+
+		paymentInfo, err := GetMoneyEUPaymentInfoByOrderID(db, lookupID)
+		if err != nil {
+			paymentInfo, err = GetMoneyEUPaymentInfoByMoneyEUOrderID(db, lookupID)
+			if err != nil {
+				log.Printf("MoneyEU webhook lookup error for order %s: %v", lookupID, err)
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte("ok"))
+				return
+			}
+		}
+		shopifyOrderID = paymentInfo.ShopifyOrderID
 
 		shopDomain := paymentInfo.ShopDomain
 
@@ -203,15 +236,19 @@ func MoneyEUWebhookHandler(db *sql.DB, shopifyResolver ShopifyResolver) http.Han
 func parseMoneyEUWebhook(raw []byte) (webhookContentItem, string, bool) {
 	var direct directMoneyEUWebhook
 	if err := json.Unmarshal(raw, &direct); err == nil {
-		if strings.TrimSpace(direct.OrderIDExt) != "" || referenceID(direct.ExternalID) != "" {
+		if strings.TrimSpace(direct.OrderIDExt) != "" || referenceID(direct.ExternalID) != "" || strings.TrimSpace(direct.OrderID) != "" || strings.TrimSpace(direct.OrderIDAlt) != "" {
 			return webhookContentItem{
-				ID:              direct.TransactionID,
-				Status:          direct.Status,
-				IdOrderExt:      direct.OrderIDExt,
-				ExternalID:      direct.ExternalID,
-				Amount:          direct.PaidAmount,
-				Currency:        direct.Currency,
-				ResponseMessage: direct.ResponseMessage,
+				ID:                direct.TransactionID,
+				Status:            fallback(direct.Status, direct.TransactionStatus),
+				IdOrderExt:        direct.OrderIDExt,
+				ExternalID:        direct.ExternalID,
+				OrderID:           direct.OrderID,
+				OrderIDAlt:        direct.OrderIDAlt,
+				TransactionID:     direct.TransactionIDNew,
+				TransactionStatus: direct.TransactionStatus,
+				Amount:            direct.PaidAmount,
+				Currency:          direct.Currency,
+				ResponseMessage:   direct.ResponseMessage,
 			}, direct.ResponseMessage, true
 		}
 	}
@@ -222,7 +259,12 @@ func parseMoneyEUWebhook(raw []byte) (webhookContentItem, string, bool) {
 		return webhookContentItem{}, "", false
 	}
 
-	item, ok := extractContentItem(env.Content)
+	content := env.Content
+	if len(bytes.TrimSpace(content)) == 0 || bytes.Equal(bytes.TrimSpace(content), []byte("null")) {
+		content = env.Data
+	}
+
+	item, ok := extractContentItem(content)
 	if !ok {
 		return webhookContentItem{}, env.Message, false
 	}
@@ -264,13 +306,13 @@ func extractContentItem(raw json.RawMessage) (webhookContentItem, bool) {
 
 	var arr []webhookContentItem
 	if err := json.Unmarshal(raw, &arr); err == nil && len(arr) > 0 {
-		if arr[0].OrderIDExt() != "" {
+		if arr[0].LookupID() != "" {
 			return arr[0], true
 		}
 	}
 
 	var obj webhookContentItem
-	if err := json.Unmarshal(raw, &obj); err == nil && obj.OrderIDExt() != "" {
+	if err := json.Unmarshal(raw, &obj); err == nil && obj.LookupID() != "" {
 		return obj, true
 	}
 

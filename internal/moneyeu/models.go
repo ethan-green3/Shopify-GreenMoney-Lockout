@@ -1,33 +1,56 @@
 package moneyeu
 
-type PaymentS2SRequest struct {
-	Amount           string `json:"amount"`
-	Currency         string `json:"currency"`
-	OrderDescription string `json:"orderDescription"`
-	Name             string `json:"name"`
-	FirstName        string `json:"firstName"`
-	LastName         string `json:"lastName"`
-	Mail             string `json:"mail"`
-	DialCode         string `json:"dialCode"`
-	PhoneNumber      string `json:"phoneNumber"`
-	Address          string `json:"address"`
-	Country          string `json:"country"`
-	State            string `json:"state"`
-	City             string `json:"city"`
-	Zip              string `json:"zip"`
-	Language         string `json:"language"`
-	Sms              bool   `json:"sms"`
-	CustomerService  string `json:"customerService"`
-	Date             string `json:"date"`
-	PaidDate         string `json:"paidDate"`
-	ReturnURL        string `json:"return_url"`
-	OrderIDExt       string `json:"orderidext"`
-	ExternalID       string `json:"ext_id"`
+type ProcessPaymentRequest struct {
+	CustomerName       string  `json:"customerName"`
+	Address            string  `json:"address,omitempty"`
+	Zip                string  `json:"zip,omitempty"`
+	MerchantTerminalID any     `json:"merchantTerminalId,omitempty"`
+	CallbackURL        string  `json:"callbackUrl,omitempty"`
+	RedirectURL        string  `json:"redirectUrl,omitempty"`
+	City               string  `json:"city,omitempty"`
+	State              string  `json:"state,omitempty"`
+	CountryName        string  `json:"countryName,omitempty"`
+	CustomerEmail      string  `json:"customerEmail"`
+	Phone              string  `json:"phone,omitempty"`
+	Amount             float64 `json:"amount"`
+	Currency           string  `json:"currency"`
+	CardNumber         string  `json:"cardNumber,omitempty"`
+	CardholderName     string  `json:"cardholderName,omitempty"`
+	ExpiryDate         string  `json:"expiryDate,omitempty"`
+	CVV                string  `json:"cvv,omitempty"`
+	MerchantName       string  `json:"merchantName,omitempty"`
+
+	Language string `json:"language,omitempty"`
+	Service  string `json:"service,omitempty"`
+
+	// MoneyEU allows merchant-specific fields in the payment body. Keep these
+	// stable so callbacks can still be correlated to Shopify orders.
+	OrderIDExt string `json:"orderidext,omitempty"`
+	ExternalID string `json:"ext_id,omitempty"`
+
+	StoreFrontURL     string `json:"storeFrontUrl"`
+	CustomerIPAddress string `json:"customerIpAddress"`
+	CustomerUserAgent string `json:"customerUserAgent"`
 }
 
-type PaymentS2SResponse struct {
-	TransactionID string `json:"transaction_id"`
-	ProcessingURL string `json:"processing_url"`
-	Message       string `json:"message"`
-	Status        string `json:"status"`
+type ProcessPaymentResponse struct {
+	Success   bool                       `json:"success"`
+	Message   string                     `json:"message"`
+	Data      ProcessPaymentResponseData `json:"data"`
+	ErrorCode string                     `json:"errorCode,omitempty"`
+	Status    int                        `json:"status,omitempty"`
+	Path      string                     `json:"path,omitempty"`
+	Timestamp string                     `json:"timestamp,omitempty"`
+}
+
+type ProcessPaymentResponseData struct {
+	OrderID           string `json:"orderId"`
+	TransactionID     string `json:"transactionId"`
+	TransactionStatus string `json:"transactionStatus"`
+	FlowType          string `json:"flowType"`
+	HPP               bool   `json:"hpp"`
+	PaymentURL        string `json:"paymentUrl"`
+	RedirectURL       string `json:"redirectUrl"`
+	CheckoutToken     string `json:"checkoutToken"`
+	CheckoutURL       string `json:"checkoutUrl"`
 }

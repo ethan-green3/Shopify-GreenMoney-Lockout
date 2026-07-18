@@ -120,7 +120,7 @@ func ShopifyOrderCreateHandler(db *sql.DB, green *GreenClient, moneySvc *moneyeu
 			}
 
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("moneyeu_email_sent"))
+			w.Write([]byte("moneyeu_checkout_created"))
 			return
 		}
 

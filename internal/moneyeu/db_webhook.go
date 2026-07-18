@@ -9,6 +9,7 @@ type ShopifyPaymentInfo struct {
 	ShopDomain       string
 	AmountStr        string
 	Currency         string
+	ShopifyOrderID   string
 	ShopifyNumericID int64
 }
 
@@ -46,6 +47,7 @@ func GetMoneyEUPaymentInfoByOrderID(db *sql.DB, shopifyOrderID string) (*Shopify
 			ShopDomain:       domain,
 			AmountStr:        fmt.Sprintf("%.2f", amount),
 			Currency:         currencyDB,
+			ShopifyOrderID:   orderIDStr,
 			ShopifyNumericID: id,
 		})
 	}
@@ -60,6 +62,36 @@ func GetMoneyEUPaymentInfoByOrderID(db *sql.DB, shopifyOrderID string) (*Shopify
 	}
 
 	return matches[0], nil
+}
+
+func GetMoneyEUPaymentInfoByMoneyEUOrderID(db *sql.DB, moneyEUOrderID string) (*ShopifyPaymentInfo, error) {
+	var amount float64
+	var currencyDB string
+	var orderIDStr string
+	var domain string
+
+	err := db.QueryRow(`
+		SELECT shop_domain, amount, currency, shopify_order_id
+		FROM money_eu_payments
+		WHERE money_eu_order_id = $1
+	`, moneyEUOrderID).Scan(&domain, &amount, &currencyDB, &orderIDStr)
+	if err != nil {
+		return nil, err
+	}
+
+	var id int64
+	_, scanErr := fmt.Sscan(orderIDStr, &id)
+	if scanErr != nil {
+		return nil, fmt.Errorf("parse shopify_order_id=%q to int64: %w", orderIDStr, scanErr)
+	}
+
+	return &ShopifyPaymentInfo{
+		ShopDomain:       domain,
+		AmountStr:        fmt.Sprintf("%.2f", amount),
+		Currency:         currencyDB,
+		ShopifyOrderID:   orderIDStr,
+		ShopifyNumericID: id,
+	}, nil
 }
 
 // Store webhook payload and status
@@ -119,6 +151,7 @@ func GetMoneyEUShopifyPaymentInfo(db *sql.DB, shopDomain string, shopifyOrderID 
 		ShopDomain:       domain,
 		AmountStr:        fmt.Sprintf("%.2f", amount),
 		Currency:         currencyDB,
+		ShopifyOrderID:   orderIDStr,
 		ShopifyNumericID: id,
 	}, nil
 }

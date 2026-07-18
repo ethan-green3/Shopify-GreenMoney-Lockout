@@ -2,7 +2,6 @@ package main
 
 import (
 	"Shopify-GreenMoney-Lockout/internal"
-	"Shopify-GreenMoney-Lockout/internal/email"
 	"Shopify-GreenMoney-Lockout/internal/moneyeu"
 	"context"
 	"encoding/json"
@@ -11,7 +10,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"strconv"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -32,17 +30,22 @@ func main() {
 	if dbURL == "" {
 		log.Fatalf("Could not retrive DB URL from .env")
 	}
-	smtp_port, err := strconv.Atoi(os.Getenv("SMTP_PORT"))
-	if err != nil {
-		log.Fatalf("Could not retrieve SMTP Port from .env")
-	}
-	smtpCfg := email.SMTPConfig{
-		Host: os.Getenv("SMTP_HOST"),
-		Port: smtp_port,
-		User: os.Getenv("SMTP_USER"),
-		Pass: os.Getenv("SMTP_PASS"),
-		From: os.Getenv("SMTP_FROM"),
-	}
+	// Local checkout-link email is currently disabled because MoneyEU hosted
+	// checkout emails the link to the customer. Leave this SMTP wiring here as
+	// a quick re-enable path if first-party email delivery is needed again.
+	/*
+		smtp_port, err := strconv.Atoi(os.Getenv("SMTP_PORT"))
+		if err != nil {
+			log.Fatalf("Could not retrieve SMTP Port from .env")
+		}
+		smtpCfg := email.SMTPConfig{
+			Host: os.Getenv("SMTP_HOST"),
+			Port: smtp_port,
+			User: os.Getenv("SMTP_USER"),
+			Pass: os.Getenv("SMTP_PASS"),
+			From: os.Getenv("SMTP_FROM"),
+		}
+	*/
 
 	db, err := internal.OpenDB(dbURL)
 	if err != nil {
@@ -68,23 +71,35 @@ func main() {
 	if err != nil {
 		log.Fatalf("Missing env variables: %s", err)
 	}
+	moneyClient.ProcessPaymentURL = os.Getenv("MONEYEU_PROCESS_PAYMENT_URL")
+	if processPaymentPath := os.Getenv("MONEYEU_PROCESS_PAYMENT_PATH"); processPaymentPath != "" {
+		moneyClient.Path = moneyeu.NormalizePath(processPaymentPath)
+	}
 	moneySvc := &moneyeu.Service{
-		DB:        db,
-		Client:    moneyClient,
-		SMTP:      smtpCfg,
-		ReturnURL: os.Getenv("MONEYEU_RETURN_URL"),
+		DB:                     db,
+		Client:                 moneyClient,
+		ReturnURL:              os.Getenv("MONEYEU_RETURN_URL"),
+		CallbackURL:            os.Getenv("MONEYEU_CALLBACK_URL"),
+		MerchantName:           os.Getenv("MONEYEU_MERCHANT_NAME"),
+		MerchantTerminalID:     os.Getenv("MONEYEU_MERCHANT_TERMINAL_ID"),
+		StoreFrontURL:          os.Getenv("MONEYEU_STOREFRONT_URL"),
+		CustomerIPAddress:      os.Getenv("MONEYEU_CUSTOMER_IP_ADDRESS"),
+		CustomerUserAgent:      os.Getenv("MONEYEU_CUSTOMER_USER_AGENT"),
+		IncludeReferenceFields: os.Getenv("MONEYEU_INCLUDE_REFERENCE_FIELDS") == "1",
 	}
 
 	ctx := context.Background()
 	internal.StartGreenPoller(ctx, db, greenClient, shopifyRegistry, 1*time.Minute)
 
-	if os.Getenv("SEND_TEST_EMAIL") == "1" {
-		err = email.Send(smtpCfg, "ethangreen2000@yahoo.com", "SMTP Test", "Hi Ethan, the SMTP Server for Lockout Supplements is up and running now")
-		if err != nil {
-			log.Fatalf("email send failed: %v", err)
+	/*
+		if os.Getenv("SEND_TEST_EMAIL") == "1" {
+			err = email.Send(smtpCfg, "ethangreen2000@yahoo.com", "SMTP Test", "Hi Ethan, the SMTP Server for Lockout Supplements is up and running now")
+			if err != nil {
+				log.Fatalf("email send failed: %v", err)
+			}
+			log.Println("Test email sent successfully")
 		}
-		log.Println("Test email sent successfully")
-	}
+	*/
 
 	mux := http.NewServeMux()
 
