@@ -961,11 +961,9 @@ func (s *Service) HandleShopifyOrderJSON(ctx context.Context, raw []byte, shopDo
 		StoreFrontURL:      storeFrontURL,
 		CustomerIPAddress:  customerIP,
 		CustomerUserAgent:  customerUserAgent,
+		OrderIDExt:         orderIDExt,
 	}
-	if s.IncludeReferenceFields {
-		req.OrderIDExt = orderIDExt
-		req.ExternalID = orderIDExt
-	}
+
 	/*
 		log.Printf("Exchange rate for Order: %s is %.6f: USD: %.2f --> EUR %.2f\n", o.Name, usdToEURRate, amount, convertedAmount)
 	*/
