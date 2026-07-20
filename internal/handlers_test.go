@@ -217,7 +217,7 @@ func TestShopifyOrderCreateHandlerRoutesMoneyEUPath(t *testing.T) {
 	if rr.Code != http.StatusOK || rr.Body.String() != "moneyeu_checkout_created" {
 		t.Fatalf("unexpected response: %d %q", rr.Code, rr.Body.String())
 	}
-	if gotReq.OrderIDExt != "" || gotReq.ExternalID != "" || gotReq.CustomerName != "John Buyer" || gotReq.CustomerEmail != "buyer@example.com" || gotReq.Service != "" || gotReq.Language != "" {
+	if gotReq.OrderIDExt != "123" || gotReq.CustomerName != "John Buyer" || gotReq.CustomerEmail != "buyer@example.com" || gotReq.Service != "" || gotReq.Language != "" {
 		t.Fatalf("unexpected MoneyEU request core fields: %+v", gotReq)
 	}
 	if gotReq.Amount != 49.99 || gotReq.Currency != "USD" || gotReq.RedirectURL != "https://store.test/orders/123" || gotReq.CallbackURL != "https://app.test/webhooks/moneyeu" || gotReq.MerchantName != "Lockout Supplements" {

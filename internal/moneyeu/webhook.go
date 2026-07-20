@@ -88,7 +88,7 @@ func (w webhookContentItem) Message() string {
 }
 
 type directMoneyEUWebhook struct {
-	TransactionID     int64           `json:"transaction_id"`
+	TransactionID     json.RawMessage `json:"transaction_id"`
 	OrderIDExt        string          `json:"orderIdExt"`
 	ExternalID        json.RawMessage `json:"ext_id"`
 	ResponseMessage   string          `json:"response_message"`
@@ -238,13 +238,12 @@ func parseMoneyEUWebhook(raw []byte) (webhookContentItem, string, bool) {
 	if err := json.Unmarshal(raw, &direct); err == nil {
 		if strings.TrimSpace(direct.OrderIDExt) != "" || referenceID(direct.ExternalID) != "" || strings.TrimSpace(direct.OrderID) != "" || strings.TrimSpace(direct.OrderIDAlt) != "" {
 			return webhookContentItem{
-				ID:                direct.TransactionID,
 				Status:            fallback(direct.Status, direct.TransactionStatus),
 				IdOrderExt:        direct.OrderIDExt,
 				ExternalID:        direct.ExternalID,
 				OrderID:           direct.OrderID,
 				OrderIDAlt:        direct.OrderIDAlt,
-				TransactionID:     direct.TransactionIDNew,
+				TransactionID:     fallback(referenceID(direct.TransactionID), direct.TransactionIDNew),
 				TransactionStatus: direct.TransactionStatus,
 				Amount:            direct.PaidAmount,
 				Currency:          direct.Currency,
@@ -330,7 +329,7 @@ func isPaidStatus(s string) bool {
 
 func isFailedStatus(s string) bool {
 	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "failed", "declined", "canceled", "cancelled", "error", "expired", "transaction failed":
+	case "failed", "declined", "canceled", "cancelled", "error", "expired", "transaction failed", "transaction declined":
 		return true
 	default:
 		return false

@@ -39,6 +39,27 @@ func (p *fakePayer) MarkOrderPaid(_ context.Context, orderID int64, amount strin
 	return nil
 }
 
+func TestParseMoneyEUWebhookCamelCaseOrderIDExtWithStringTransactionID(t *testing.T) {
+	body := []byte(`{"transaction_id":"TXN-932b62f8-e18b-457e-ba72-0ee6cd5205a6","response_message":"xxxxxxxxx","paid_amount":11,"currency":"USD","status":"Transaction Declined","orderIdExt":"MY-ORDER-REF-001"}`)
+
+	item, message, ok := parseMoneyEUWebhook(body)
+	if !ok {
+		t.Fatal("expected webhook to parse")
+	}
+	if got := item.ShopifyReferenceID(); got != "MY-ORDER-REF-001" {
+		t.Fatalf("unexpected orderIdExt: got %q", got)
+	}
+	if item.TransactionID != "TXN-932b62f8-e18b-457e-ba72-0ee6cd5205a6" {
+		t.Fatalf("unexpected transaction ID: %q", item.TransactionID)
+	}
+	if message != "xxxxxxxxx" {
+		t.Fatalf("unexpected response message: %q", message)
+	}
+	if !isFailedStatus(item.Status) {
+		t.Fatalf("expected %q to be treated as a failed status", item.Status)
+	}
+}
+
 func TestMoneyEUWebhookHandlerPaidFlowUsesShopScopedLookup(t *testing.T) {
 	db, state, err := testsql.Open([]testsql.Expectation{
 		{
