@@ -25,7 +25,7 @@ type ProcessPaymentRequest struct {
 
 	// MoneyEU allows merchant-specific fields in the payment body. Keep these
 	// stable so callbacks can still be correlated to Shopify orders.
-	OrderIDExt string `json:"orderIDExt"`
+	OrderIDExt string `json:"orderIdExt"`
 
 	StoreFrontURL     string `json:"storeFrontUrl"`
 	CustomerIPAddress string `json:"customerIpAddress"`

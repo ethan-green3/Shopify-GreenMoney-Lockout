@@ -31,18 +31,18 @@ type webhookEnvelope struct {
 
 type webhookContentItem struct {
 	ID                int64           `json:"id"`
-	Amount            float64         `json:"amount"`
+	Amount            float64         `json:"paid_amount"`
 	Status            string          `json:"status"`
 	Date              string          `json:"date"`
-	IdOrderExt        string          `json:"idOrderExt"`
+	IdOrderExt        string          `json:"orderIdExt"`
 	OrderIDExtAlt     string          `json:"orderidext"`
 	ExternalID        json.RawMessage `json:"ext_id"`
 	OrderID           string          `json:"orderId"`
 	OrderIDAlt        string          `json:"order_id"`
-	TransactionID     string          `json:"transactionId"`
+	TransactionID     string          `json:"transaction_id"`
 	Currency          string          `json:"currency"`
 	ResponseCode      string          `json:"responseCode"`
-	ResponseMessage   string          `json:"responseMessage"`
+	ResponseMessage   string          `json:"response_message"`
 	TransactionStatus string          `json:"transactionStatus"`
 	Url               string          `json:"url"`
 }
@@ -89,7 +89,7 @@ func (w webhookContentItem) Message() string {
 
 type directMoneyEUWebhook struct {
 	TransactionID     int64           `json:"transaction_id"`
-	OrderIDExt        string          `json:"orderidext"`
+	OrderIDExt        string          `json:"orderIdExt"`
 	ExternalID        json.RawMessage `json:"ext_id"`
 	ResponseMessage   string          `json:"response_message"`
 	PaidAmount        float64         `json:"paid_amount"`
