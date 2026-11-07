@@ -144,6 +144,9 @@ func (s *Service) Run(ctx context.Context) {
 				log.Printf("Burner job claim: %v", err)
 				continue
 			}
+			if len(jobs) > 0 {
+				log.Printf("Burner jobs claimed: count=%d worker=%s", len(jobs), worker)
+			}
 			for _, job := range jobs {
 				s.processJob(ctx, job)
 			}
@@ -152,6 +155,7 @@ func (s *Service) Run(ctx context.Context) {
 }
 
 func (s *Service) processJob(ctx context.Context, job Job) {
+	log.Printf("Burner job started: id=%d payment_id=%d type=%s attempt=%d", job.ID, job.PaymentID, job.Type, job.Attempts)
 	var err error
 	switch job.Type {
 	case JobCreateInvoice:
@@ -171,17 +175,21 @@ func (s *Service) processJob(ctx context.Context, job Job) {
 		} else {
 			_ = s.Store.Complete(ctx, job.ID)
 		}
+		log.Printf("Burner job succeeded: id=%d payment_id=%d type=%s", job.ID, job.PaymentID, job.Type)
 		return
 	}
 	if errors.Is(err, errTerminal) {
 		_ = s.Store.Complete(ctx, job.ID)
+		log.Printf("Burner job terminal: id=%d payment_id=%d type=%s", job.ID, job.PaymentID, job.Type)
 		return
 	}
 	if job.Attempts >= 5 {
 		_ = s.Store.Dead(ctx, job.ID, err)
+		log.Printf("Burner job dead: id=%d payment_id=%d type=%s error=%v", job.ID, job.PaymentID, job.Type, err)
 		return
 	}
 	_ = s.Store.Retry(ctx, job.ID, err, time.Duration(job.Attempts+1)*time.Minute)
+	log.Printf("Burner job retry scheduled: id=%d payment_id=%d type=%s error=%v", job.ID, job.PaymentID, job.Type, err)
 }
 
 func (s *Service) createInvoice(ctx context.Context, job Job) error {
@@ -190,8 +198,10 @@ func (s *Service) createInvoice(ctx context.Context, job Job) error {
 		return err
 	}
 	if p.InvoiceID.Valid {
+		log.Printf("Burner invoice already stored: payment_id=%d invoice_id=%s", p.ID, p.InvoiceID.String)
 		return nil
 	}
+	log.Printf("Burner invoice create requested: payment_id=%d order_id=%d amount=%s", p.ID, p.ShopifyOrderID, FormatUSD(p.AmountCents))
 	inv, err := s.Client.CreateInvoice(ctx, p.IdempotencyKey, InvoiceCreateRequest{AmountUSD: FormatUSD(p.AmountCents), Memo: "Shopify Order " + p.ShopifyOrderName, Metadata: map[string]any{"source": "shopify", "external_order_id": OrderIDString(p.ShopifyOrderID), "shop_domain": p.ShopDomain, "idempotency_key": p.IdempotencyKey}})
 	if err != nil {
 		// A timeout can leave creation uncertain. Before retrying, look for the
@@ -202,6 +212,7 @@ func (s *Service) createInvoice(ctx context.Context, job Job) error {
 		}
 		return err
 	}
+	log.Printf("Burner invoice created: payment_id=%d invoice_id=%s status=%s", p.ID, inv.ID, inv.Status)
 	return s.finishInvoice(ctx, p, inv)
 }
 
@@ -247,6 +258,7 @@ func (s *Service) sendEmail(ctx context.Context, job Job) error {
 		return err
 	}
 	if p.EmailStatus == "sent" {
+		log.Printf("Burner checkout email already sent: payment_id=%d", p.ID)
 		return nil
 	}
 	if p.CheckoutURL == "" {
@@ -260,6 +272,7 @@ func (s *Service) sendEmail(ctx context.Context, job Job) error {
 		_ = s.Store.SetEmailStatus(ctx, p.ID, "failed", err.Error())
 		return err
 	}
+	log.Printf("Burner checkout email sent: payment_id=%d", p.ID)
 	return s.Store.SetEmailStatus(ctx, p.ID, "sent", "")
 }
 
@@ -278,6 +291,7 @@ func (s *Service) reconcile(ctx context.Context, job Job) error {
 	if err := s.Store.SetInvoiceStatus(ctx, p.ID, inv); err != nil {
 		return err
 	}
+	log.Printf("Burner invoice reconciled: payment_id=%d invoice_id=%s status=%s", p.ID, inv.ID, inv.Status)
 	if inv.Status == StatusSwept {
 		return s.Store.Enqueue(ctx, p.ID, JobReconcileShopify, time.Now(), nil)
 	}
@@ -295,6 +309,7 @@ func (s *Service) reconcileShopify(ctx context.Context, job Job) error {
 	if err != nil {
 		return err
 	}
+	log.Printf("Shopify paid reconciliation requested: payment_id=%d shop=%s order_id=%d", p.ID, p.ShopDomain, p.ShopifyOrderID)
 	if !p.InvoiceID.Valid {
 		return errors.New("cannot reconcile Shopify without invoice id")
 	}
@@ -312,6 +327,9 @@ func (s *Service) reconcileShopify(ctx context.Context, job Job) error {
 		return err
 	}
 	_, err = s.Store.DB.ExecContext(ctx, `UPDATE burner_payments SET shopify_sync_state='paid',shopify_marked_paid_at=NOW(),shopify_attribution='confirmed',shopify_transaction_id=NULLIF($2,''),updated_at=NOW() WHERE id=$1`, p.ID, transactionID)
+	if err == nil {
+		log.Printf("Shopify paid reconciliation confirmed: payment_id=%d order_id=%d transaction_id=%s", p.ID, p.ShopifyOrderID, transactionID)
+	}
 	return err
 }
 

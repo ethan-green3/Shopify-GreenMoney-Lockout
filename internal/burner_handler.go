@@ -52,6 +52,7 @@ func ShopifyOrderCreateHandlerWithBurner(db *sql.DB, green *GreenClient, moneySv
 				http.Error(w, "missing shop domain", 400)
 				return
 			}
+			log.Printf("Burner order received: shop=%s order_id=%d order_name=%s amount=%s currency=%s", shopDomain, order.ID, order.Name, order.TotalPrice, order.Currency)
 			_, created, err := service.AcceptShopifyOrder(r.Context(), raw, shopDomain, r.Header.Get("X-Shopify-Webhook-Id"), r.Header.Get("X-Shopify-Event-Id"))
 			if err != nil {
 				log.Printf("Burner order enqueue failed: %v", err)
@@ -59,6 +60,7 @@ func ShopifyOrderCreateHandlerWithBurner(db *sql.DB, green *GreenClient, moneySv
 				return
 			}
 			if created {
+				log.Printf("Burner order queued: shop=%s order_id=%d", shopDomain, order.ID)
 				w.WriteHeader(http.StatusAccepted)
 				_, _ = w.Write([]byte("queued"))
 			} else {
