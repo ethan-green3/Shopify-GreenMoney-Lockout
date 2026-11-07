@@ -111,7 +111,7 @@ func (c *ShopifyClient) ensureOrderPaid(ctx context.Context, orderID int64, expe
 	}
 	o := pre.Data.Order
 	if o.ID == "" || o.LegacyResourceID != orderID {
-		return "", fmt.Errorf("Shopify order identity mismatch")
+		return "", fmt.Errorf("Shopify order identity mismatch: expected gid=%s legacy_id=%d, got gid=%s legacy_id=%d", gid, orderID, o.ID, o.LegacyResourceID)
 	}
 	if strings.EqualFold(o.DisplayFinancialStatus, "PAID") || o.FullyPaid {
 		return "", fmt.Errorf("Shopify order already paid without attributable Burner transaction")
