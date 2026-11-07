@@ -111,7 +111,11 @@ func main() {
 		if checkout == "" {
 			checkout = "https://pay.burner.pro"
 		}
-		burnerSvc = &burner.Service{Store: &burner.Store{DB: db}, Client: &burner.Client{BaseURL: base, APIKey: os.Getenv("BURNER_API_KEY"), APIVersion: version}, CheckoutBaseURL: checkout, Email: burnerEmailSender{cfg: smtpCfg}, Shopify: burnerShopifyResolver{registry: shopifyRegistry}}
+		reconcileInterval := 5 * time.Minute
+		if seconds, parseErr := strconv.Atoi(strings.TrimSpace(os.Getenv("BURNER_RECONCILE_INTERVAL_SECONDS"))); parseErr == nil && seconds > 0 {
+			reconcileInterval = time.Duration(seconds) * time.Second
+		}
+		burnerSvc = &burner.Service{Store: &burner.Store{DB: db}, Client: &burner.Client{BaseURL: base, APIKey: os.Getenv("BURNER_API_KEY"), APIVersion: version}, CheckoutBaseURL: checkout, Email: burnerEmailSender{cfg: smtpCfg}, Shopify: burnerShopifyResolver{registry: shopifyRegistry}, ReconcileInterval: reconcileInterval}
 		log.Printf("Burner payments enabled: API=%s checkout=%s", base, checkout)
 		go burnerSvc.Run(ctx)
 	}

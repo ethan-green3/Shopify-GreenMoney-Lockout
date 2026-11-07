@@ -26,12 +26,13 @@ type ShopifyResolver interface {
 }
 
 type Service struct {
-	Store           *Store
-	Client          *Client
-	CheckoutBaseURL string
-	Email           EmailSender
-	Shopify         ShopifyResolver
-	WorkerID        string
+	Store             *Store
+	Client            *Client
+	CheckoutBaseURL   string
+	Email             EmailSender
+	Shopify           ShopifyResolver
+	WorkerID          string
+	ReconcileInterval time.Duration
 }
 
 type orderPayload struct {
@@ -171,7 +172,11 @@ func (s *Service) processJob(ctx context.Context, job Job) {
 	}
 	if err == nil {
 		if job.Type == JobReconcileInvoice {
-			_ = s.Store.Reschedule(ctx, job.ID, 5*time.Minute)
+			interval := s.ReconcileInterval
+			if interval <= 0 {
+				interval = 5 * time.Minute
+			}
+			_ = s.Store.Reschedule(ctx, job.ID, interval)
 		} else {
 			_ = s.Store.Complete(ctx, job.ID)
 		}
