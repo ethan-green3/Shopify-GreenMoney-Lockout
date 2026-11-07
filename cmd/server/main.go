@@ -112,6 +112,7 @@ func main() {
 			checkout = "https://pay.burner.pro"
 		}
 		burnerSvc = &burner.Service{Store: &burner.Store{DB: db}, Client: &burner.Client{BaseURL: base, APIKey: os.Getenv("BURNER_API_KEY"), APIVersion: version}, CheckoutBaseURL: checkout, Email: burnerEmailSender{cfg: smtpCfg}, Shopify: burnerShopifyResolver{registry: shopifyRegistry}}
+		log.Printf("Burner payments enabled: API=%s checkout=%s", base, checkout)
 		go burnerSvc.Run(ctx)
 	}
 	internal.StartGreenPoller(ctx, db, greenClient, shopifyRegistry, 1*time.Minute)
