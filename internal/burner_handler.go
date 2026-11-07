@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 )
 
@@ -26,6 +27,9 @@ func ShopifyOrderCreateHandlerWithBurner(db *sql.DB, green *GreenClient, moneySv
 		if err != nil {
 			http.Error(w, "bad request", 400)
 			return
+		}
+		if os.Getenv("APP_ENV") == "development" && os.Getenv("DEBUG_LOG_WEBHOOK_BODIES") == "1" {
+			log.Printf("DEBUG Shopify orders/create request body: %s", string(raw))
 		}
 		if strings.TrimSpace(r.Header.Get("X-Shopify-Topic")) != "orders/create" {
 			http.Error(w, "unexpected topic", 400)
