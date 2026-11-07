@@ -43,7 +43,7 @@ func WebhookHandler(store *Store, secret string, now func() time.Time) http.Hand
 			http.Error(w, "bad request", 400)
 			return
 		}
-		if os.Getenv("APP_ENV") == "development" && os.Getenv("DEBUG_LOG_WEBHOOK_BODIES") == "1" {
+		if os.Getenv("DEBUG_LOG_WEBHOOK_BODIES") == "1" {
 			log.Printf("DEBUG Burner webhook request body: %s", string(raw))
 		}
 		timestamp, provided, err := parseSignature(r.Header.Get("X-Burner-Signature"))

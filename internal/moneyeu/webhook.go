@@ -118,7 +118,7 @@ func MoneyEUWebhookHandler(db *sql.DB, shopifyResolver ShopifyResolver) http.Han
 			http.Error(w, "empty body", http.StatusBadRequest)
 			return
 		}
-		if os.Getenv("APP_ENV") == "development" && os.Getenv("DEBUG_LOG_WEBHOOK_BODIES") == "1" {
+		if os.Getenv("DEBUG_LOG_WEBHOOK_BODIES") == "1" {
 			log.Printf("DEBUG MoneyEU webhook request body: %s", string(raw))
 		}
 
