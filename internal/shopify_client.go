@@ -146,7 +146,7 @@ func (c *ShopifyClient) ensureOrderPaid(ctx context.Context, orderID int64, expe
 	a := out.Data.Order
 	postLegacyID, postLegacyErr := strconv.ParseInt(a.LegacyResourceID, 10, 64)
 	if a.ID != gid || postLegacyErr != nil || postLegacyID != orderID || !a.FullyPaid || !moneyEqual(a.TotalOutstandingSet.ShopMoney.Amount, "0") {
-		return "", fmt.Errorf("Shopify paid postflight failed")
+		return "", fmt.Errorf("Shopify paid postflight failed: expected gid=%s legacy_id=%d, got gid=%s legacy_id=%s financial_status=%s fully_paid=%t outstanding=%s/%s transactions=%d", gid, orderID, a.ID, a.LegacyResourceID, a.DisplayFinancialStatus, a.FullyPaid, a.TotalOutstandingSet.ShopMoney.Amount, a.TotalOutstandingSet.ShopMoney.CurrencyCode, len(a.Transactions))
 	}
 	var transactionID string
 	for _, tx := range a.Transactions {
