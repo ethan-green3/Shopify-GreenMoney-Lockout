@@ -57,20 +57,18 @@ type shopifyGraphQLOrder struct {
 			CurrencyCode string `json:"currencyCode"`
 		} `json:"shopMoney"`
 	} `json:"totalOutstandingSet"`
-	Transactions struct {
-		Nodes []struct {
-			ID                   string `json:"id"`
-			Kind                 string `json:"kind"`
-			Status               string `json:"status"`
-			Gateway              string `json:"gateway"`
-			ManualPaymentGateway bool   `json:"manualPaymentGateway"`
-			AmountSet            struct {
-				ShopMoney struct {
-					Amount       string `json:"amount"`
-					CurrencyCode string `json:"currencyCode"`
-				} `json:"shopMoney"`
-			} `json:"amountSet"`
-		} `json:"nodes"`
+	Transactions []struct {
+		ID                   string `json:"id"`
+		Kind                 string `json:"kind"`
+		Status               string `json:"status"`
+		Gateway              string `json:"gateway"`
+		ManualPaymentGateway bool   `json:"manualPaymentGateway"`
+		AmountSet            struct {
+			ShopMoney struct {
+				Amount       string `json:"amount"`
+				CurrencyCode string `json:"currencyCode"`
+			} `json:"shopMoney"`
+		} `json:"amountSet"`
 	} `json:"transactions"`
 }
 
@@ -97,7 +95,7 @@ func (c *ShopifyClient) EnsureOrderPaidWithTransaction(ctx context.Context, orde
 
 func (c *ShopifyClient) ensureOrderPaid(ctx context.Context, orderID int64, expectedAmount, currency string) (string, error) {
 	gid := fmt.Sprintf("gid://shopify/Order/%d", orderID)
-	query := `query($id: ID!) { order(id: $id) { id legacyResourceId displayFinancialStatus canMarkAsPaid fullyPaid totalOutstandingSet { shopMoney { amount currencyCode } } transactions(first: 250) { nodes { id kind status gateway manualPaymentGateway amountSet { shopMoney { amount currencyCode } } } } } }`
+	query := `query($id: ID!) { order(id: $id) { id legacyResourceId displayFinancialStatus canMarkAsPaid fullyPaid totalOutstandingSet { shopMoney { amount currencyCode } } transactions { id kind status gateway manualPaymentGateway amountSet { shopMoney { amount currencyCode } } } } }`
 	var pre struct {
 		Data struct {
 			Order shopifyGraphQLOrder `json:"order"`
@@ -122,7 +120,7 @@ func (c *ShopifyClient) ensureOrderPaid(ctx context.Context, orderID int64, expe
 	if !strings.EqualFold(o.TotalOutstandingSet.ShopMoney.CurrencyCode, currency) || !moneyEqual(o.TotalOutstandingSet.ShopMoney.Amount, expectedAmount) || !o.CanMarkAsPaid {
 		return "", fmt.Errorf("Shopify order is not safely markable as paid")
 	}
-	mutation := `mutation($input: OrderMarkAsPaidInput!) { orderMarkAsPaid(input: $input) { userErrors { message } order { id legacyResourceId displayFinancialStatus fullyPaid totalOutstandingSet { shopMoney { amount currencyCode } } transactions(first: 250) { nodes { id kind status gateway manualPaymentGateway amountSet { shopMoney { amount currencyCode } } } } } } }`
+	mutation := `mutation($input: OrderMarkAsPaidInput!) { orderMarkAsPaid(input: $input) { userErrors { message } order { id legacyResourceId displayFinancialStatus fullyPaid totalOutstandingSet { shopMoney { amount currencyCode } } transactions { id kind status gateway manualPaymentGateway amountSet { shopMoney { amount currencyCode } } } } } }`
 	var out struct {
 		Data struct {
 			Order      shopifyGraphQLOrder `json:"order"`
@@ -148,7 +146,7 @@ func (c *ShopifyClient) ensureOrderPaid(ctx context.Context, orderID int64, expe
 		return "", fmt.Errorf("Shopify paid postflight failed")
 	}
 	var transactionID string
-	for _, tx := range a.Transactions.Nodes {
+	for _, tx := range a.Transactions {
 		if strings.EqualFold(tx.Status, "SUCCESS") && tx.ManualPaymentGateway && moneyEqual(tx.AmountSet.ShopMoney.Amount, expectedAmount) && strings.EqualFold(tx.AmountSet.ShopMoney.CurrencyCode, currency) {
 			if transactionID != "" {
 				return "", fmt.Errorf("multiple matching Shopify paid transactions")
