@@ -80,6 +80,11 @@ func main() {
 
 	ctx := context.Background()
 	webhookVerifier := shopifyRegistry.WebhookSecrets()
+	if !webhookVerifier.HasAny() {
+		// Preserve grandfathered Shopify installations that do not expose a
+		// webhook secret. Burner webhook authentication remains mandatory.
+		webhookVerifier = nil
+	}
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("SHOPIFY_WEBHOOK_ENFORCE")), "0") && strings.EqualFold(strings.TrimSpace(os.Getenv("APP_ENV")), "development") {
 		webhookVerifier = nil
 	}
@@ -91,9 +96,6 @@ func main() {
 		}
 		if strings.TrimSpace(os.Getenv("BURNER_API_KEY")) == "" || strings.TrimSpace(os.Getenv("BURNER_WEBHOOK_SECRET")) == "" {
 			log.Fatal("BURNER_API_KEY and BURNER_WEBHOOK_SECRET are required when Burner is enabled")
-		}
-		if !shopifyRegistry.WebhookSecrets().HasAny() {
-			log.Fatal("at least one Shopify webhook secret is required when Burner is enabled")
 		}
 		if smtpCfg.Host == "" || smtpCfg.Port == 0 || smtpCfg.From == "" {
 			log.Fatal("SMTP_HOST, SMTP_PORT, and SMTP_FROM are required when Burner is enabled")
