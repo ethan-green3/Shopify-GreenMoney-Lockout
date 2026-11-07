@@ -56,9 +56,15 @@ func IsMoneyEUOrder(o ShopifyOrder) bool {
 	return false
 }
 
+const (
+	BurnerPaymentGatewayName       = "Preferred Option - Debit/Credit/Apple Pay"
+	LegacyBurnerPaymentGatewayName = "Burner Pay"
+)
+
 func IsBurnerPayOrder(o ShopifyOrder) bool {
 	for _, name := range o.PaymentGatewayNames {
-		if strings.EqualFold(strings.TrimSpace(name), "Burner Pay") {
+		gateway := strings.TrimSpace(name)
+		if strings.EqualFold(gateway, BurnerPaymentGatewayName) || strings.EqualFold(gateway, LegacyBurnerPaymentGatewayName) {
 			return true
 		}
 	}
