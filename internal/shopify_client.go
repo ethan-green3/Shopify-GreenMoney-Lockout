@@ -109,6 +109,9 @@ func (c *ShopifyClient) ensureOrderPaid(ctx context.Context, orderID int64, expe
 	if err := c.graphQL(ctx, query, map[string]any{"id": gid}, &pre); err != nil {
 		return "", err
 	}
+	if len(pre.Errors) > 0 {
+		return "", fmt.Errorf("Shopify GraphQL order query: %s", pre.Errors[0].Message)
+	}
 	o := pre.Data.Order
 	if o.ID == "" || o.LegacyResourceID != orderID {
 		return "", fmt.Errorf("Shopify order identity mismatch: expected gid=%s legacy_id=%d, got gid=%s legacy_id=%d", gid, orderID, o.ID, o.LegacyResourceID)
@@ -133,6 +136,9 @@ func (c *ShopifyClient) ensureOrderPaid(ctx context.Context, orderID int64, expe
 	}
 	if err := c.graphQL(ctx, mutation, map[string]any{"input": map[string]string{"id": gid}}, &out); err != nil {
 		return "", err
+	}
+	if len(out.Errors) > 0 {
+		return "", fmt.Errorf("Shopify GraphQL orderMarkAsPaid: %s", out.Errors[0].Message)
 	}
 	if len(out.Data.UserErrors) > 0 {
 		return "", fmt.Errorf("Shopify orderMarkAsPaid: %s", out.Data.UserErrors[0].Message)
