@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net"
+	"net/mail"
 	"net/smtp"
 	"os"
 	"strings"
@@ -26,6 +27,10 @@ func Send(cfg SMTPConfig, to, subject, body string) error {
 func SendContext(ctx context.Context, cfg SMTPConfig, to, subject, body string) error {
 	if strings.TrimSpace(cfg.Host) == "" || cfg.Port <= 0 || strings.TrimSpace(cfg.From) == "" {
 		return fmt.Errorf("smtp configuration is incomplete")
+	}
+	from, err := mail.ParseAddress(cfg.From)
+	if err != nil || strings.TrimSpace(from.Address) == "" {
+		return fmt.Errorf("smtp from address is invalid")
 	}
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
 
@@ -63,7 +68,7 @@ func SendContext(ctx context.Context, cfg SMTPConfig, to, subject, body string) 
 	}
 
 	// From
-	if err = conn.Mail(cfg.From); err != nil {
+	if err = conn.Mail(from.Address); err != nil {
 		return fmt.Errorf("mail from: %w", err)
 	}
 
