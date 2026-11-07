@@ -144,6 +144,22 @@ func (c *ShopifyClient) ensureOrderPaid(ctx context.Context, orderID int64, expe
 		return "", fmt.Errorf("Shopify orderMarkAsPaid: %s", out.Data.UserErrors[0].Message)
 	}
 	a := out.Data.Order
+	// Some Shopify API versions apply the mutation but return an empty order
+	// selection. Re-query the order before treating the result as ambiguous;
+	// this never issues a second payment mutation.
+	if a.ID == "" {
+		var verify struct {
+			Data struct {
+				Order shopifyGraphQLOrder `json:"order"`
+			} `json:"data"`
+			Errors []struct {
+				Message string `json:"message"`
+			} `json:"errors"`
+		}
+		if verifyErr := c.graphQL(ctx, query, map[string]any{"id": gid}, &verify); verifyErr == nil && len(verify.Errors) == 0 {
+			a = verify.Data.Order
+		}
+	}
 	postLegacyID, postLegacyErr := strconv.ParseInt(a.LegacyResourceID, 10, 64)
 	if a.ID != gid || postLegacyErr != nil || postLegacyID != orderID || !a.FullyPaid || !moneyEqual(a.TotalOutstandingSet.ShopMoney.Amount, "0") {
 		return "", fmt.Errorf("Shopify paid postflight failed: expected gid=%s legacy_id=%d, got gid=%s legacy_id=%s financial_status=%s fully_paid=%t outstanding=%s/%s transactions=%d", gid, orderID, a.ID, a.LegacyResourceID, a.DisplayFinancialStatus, a.FullyPaid, a.TotalOutstandingSet.ShopMoney.Amount, a.TotalOutstandingSet.ShopMoney.CurrencyCode, len(a.Transactions))
