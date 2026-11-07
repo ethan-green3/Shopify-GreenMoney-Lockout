@@ -273,7 +273,9 @@ func (s *Service) sendEmail(ctx context.Context, job Job) error {
 		return errors.New("email sender is not configured")
 	}
 	body := fmt.Sprintf("Thanks for your order %s. Complete payment securely here:\n%s\n\nDo not place a second order if this message is delayed; contact support for a resend.", p.ShopifyOrderName, p.CheckoutURL)
+	log.Printf("Burner checkout email delivery starting: payment_id=%d", p.ID)
 	if err := s.Email.Send(ctx, p.CustomerEmail, "Complete your Burner Pay payment", body); err != nil {
+		log.Printf("Burner checkout email failed: payment_id=%d error=%v", p.ID, err)
 		_ = s.Store.SetEmailStatus(ctx, p.ID, "failed", err.Error())
 		return err
 	}
