@@ -8,6 +8,7 @@ import (
 	"io"
 	"math/big"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -47,7 +48,7 @@ type shopifyTransaction struct {
 
 type shopifyGraphQLOrder struct {
 	ID                     string `json:"id"`
-	LegacyResourceID       int64  `json:"legacyResourceId"`
+	LegacyResourceID       string `json:"legacyResourceId"`
 	DisplayFinancialStatus string `json:"displayFinancialStatus"`
 	CanMarkAsPaid          bool   `json:"canMarkAsPaid"`
 	FullyPaid              bool   `json:"fullyPaid"`
@@ -111,8 +112,9 @@ func (c *ShopifyClient) ensureOrderPaid(ctx context.Context, orderID int64, expe
 		return "", fmt.Errorf("Shopify GraphQL order query: %s", pre.Errors[0].Message)
 	}
 	o := pre.Data.Order
-	if o.ID == "" || o.LegacyResourceID != orderID {
-		return "", fmt.Errorf("Shopify order identity mismatch: expected gid=%s legacy_id=%d, got gid=%s legacy_id=%d", gid, orderID, o.ID, o.LegacyResourceID)
+	legacyID, legacyErr := strconv.ParseInt(o.LegacyResourceID, 10, 64)
+	if o.ID == "" || legacyErr != nil || legacyID != orderID {
+		return "", fmt.Errorf("Shopify order identity mismatch: expected gid=%s legacy_id=%d, got gid=%s legacy_id=%s", gid, orderID, o.ID, o.LegacyResourceID)
 	}
 	if strings.EqualFold(o.DisplayFinancialStatus, "PAID") || o.FullyPaid {
 		return "", fmt.Errorf("Shopify order already paid without attributable Burner transaction")
@@ -142,7 +144,8 @@ func (c *ShopifyClient) ensureOrderPaid(ctx context.Context, orderID int64, expe
 		return "", fmt.Errorf("Shopify orderMarkAsPaid: %s", out.Data.UserErrors[0].Message)
 	}
 	a := out.Data.Order
-	if a.ID != gid || a.LegacyResourceID != orderID || !a.FullyPaid || !moneyEqual(a.TotalOutstandingSet.ShopMoney.Amount, "0") {
+	postLegacyID, postLegacyErr := strconv.ParseInt(a.LegacyResourceID, 10, 64)
+	if a.ID != gid || postLegacyErr != nil || postLegacyID != orderID || !a.FullyPaid || !moneyEqual(a.TotalOutstandingSet.ShopMoney.Amount, "0") {
 		return "", fmt.Errorf("Shopify paid postflight failed")
 	}
 	var transactionID string
