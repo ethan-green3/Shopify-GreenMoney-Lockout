@@ -961,16 +961,16 @@ func (s *Service) HandleShopifyOrderJSON(ctx context.Context, raw []byte, shopDo
 		StoreFrontURL:      storeFrontURL,
 		CustomerIPAddress:  customerIP,
 		CustomerUserAgent:  customerUserAgent,
-		OrderIDExt:         orderIDExt,
 	}
-
+	req.OrderIDExt = orderIDExt
+	if s.IncludeReferenceFields {
+		req.OrderIDExt = orderIDExt
+		req.ExternalID = orderIDExt
+	}
 	/*
 		log.Printf("Exchange rate for Order: %s is %.6f: USD: %.2f --> EUR %.2f\n", o.Name, usdToEURRate, amount, convertedAmount)
 	*/
-	if payloadJSON, err := json.Marshal(req); err == nil {
-		log.Printf("MoneyEU hosted checkout payload JSON: %s", string(payloadJSON))
-	}
-
+	log.Println("MoneyEU hosted checkout payload:", req)
 	resp, err := s.Client.CreateCheckoutOrder(ctx, req)
 	if err != nil {
 		return fmt.Errorf("CreateCheckoutOrder: %w", err)
@@ -987,38 +987,38 @@ func (s *Service) HandleShopifyOrderJSON(ctx context.Context, raw []byte, shopDo
 	if err := SetMoneyEUOrderLink(s.DB, paymentID, moneyEUOrderID, orderIDExt, checkoutURL, status); err != nil {
 		return err
 	}
-	if strings.TrimSpace(o.Email) == "" {
-		_ = MarkEmailFailed(s.DB, paymentID, "missing customer email")
-		return fmt.Errorf("email send: missing customer email")
-	}
-	// MoneyEU's hosted checkout can deliver the link itself. When first-party
-	// SMTP is intentionally not configured, the hosted-link creation is still a
-	// successful payment setup rather than an SMTP failure.
-	if s.EmailSender == nil && strings.TrimSpace(s.SMTP.Host) == "" {
+
+	// 3) Email checkout link
+	// MoneyEU's hosted checkout flow emails the checkout link to the customer.
+	// Keep the old local SMTP fallback commented here in case we need to
+	// re-enable first-party email delivery.
+	/*
+		if strings.TrimSpace(o.Email) == "" {
+			_ = MarkEmailFailed(s.DB, paymentID, "missing customer email")
+			return fmt.Errorf("email send: missing customer email")
+		}
+
+		subject := fmt.Sprintf("Complete your payment for Order %s", o.Name)
+		body := fmt.Sprintf(
+			"Hi,\n\nThanks for your order with Lockout Supplements (%s).\n\n"+
+				"To complete payment, use the secure checkout link below:\n%s\n\n"+
+				"Amount due: %.2f %s\n\n"+
+				"If you have any issues, please reach out to glenn@lockoutforums.com for help.\n\n"+
+				"- Lockout Supplements\n",
+			o.Name, checkoutURL, amount, o.Currency,
+		)
+
+		send := s.EmailSender
+		if send == nil {
+			send = email.Send
+		}
+
+		if err := send(s.SMTP, o.Email, subject, body); err != nil {
+			_ = MarkEmailFailed(s.DB, paymentID, err.Error())
+			return fmt.Errorf("email send: %w", err)
+		}
 		_ = MarkEmailSent(s.DB, paymentID)
-		return nil
-	}
-
-	subject := fmt.Sprintf("Complete your payment for Order %s", o.Name)
-	body := fmt.Sprintf(
-		"Hi,\n\nThanks for your order with Lockout Supplements (%s).\n\n"+
-			"To complete payment, use the secure checkout link below:\n%s\n\n"+
-			"Amount due: %.2f %s\n\n"+
-			"If you have any issues, please reach out to glenn@lockoutforums.com for help.\n\n"+
-			"- Lockout Supplements\n",
-		o.Name, checkoutURL, amount, o.Currency,
-	)
-
-	send := s.EmailSender
-	if send == nil {
-		send = email.Send
-	}
-
-	if err := send(s.SMTP, o.Email, subject, body); err != nil {
-		_ = MarkEmailFailed(s.DB, paymentID, err.Error())
-		return fmt.Errorf("email send: %w", err)
-	}
-	_ = MarkEmailSent(s.DB, paymentID)
+	*/
 
 	log.Printf("MoneyEU: hosted checkout created for order %s", o.Name)
 	return nil
