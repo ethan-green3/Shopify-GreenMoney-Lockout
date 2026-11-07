@@ -991,6 +991,13 @@ func (s *Service) HandleShopifyOrderJSON(ctx context.Context, raw []byte, shopDo
 		_ = MarkEmailFailed(s.DB, paymentID, "missing customer email")
 		return fmt.Errorf("email send: missing customer email")
 	}
+	// MoneyEU's hosted checkout can deliver the link itself. When first-party
+	// SMTP is intentionally not configured, the hosted-link creation is still a
+	// successful payment setup rather than an SMTP failure.
+	if s.EmailSender == nil && strings.TrimSpace(s.SMTP.Host) == "" {
+		_ = MarkEmailSent(s.DB, paymentID)
+		return nil
+	}
 
 	subject := fmt.Sprintf("Complete your payment for Order %s", o.Name)
 	body := fmt.Sprintf(

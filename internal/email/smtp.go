@@ -1,9 +1,12 @@
 package email
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
+	"net"
 	"net/smtp"
+	"os"
 	"strings"
 	"time"
 )
@@ -17,13 +20,26 @@ type SMTPConfig struct {
 }
 
 func Send(cfg SMTPConfig, to, subject, body string) error {
+	return SendContext(context.Background(), cfg, to, subject, body)
+}
+
+func SendContext(ctx context.Context, cfg SMTPConfig, to, subject, body string) error {
+	if strings.TrimSpace(cfg.Host) == "" || cfg.Port <= 0 || strings.TrimSpace(cfg.From) == "" {
+		return fmt.Errorf("smtp configuration is incomplete")
+	}
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
 
-	// Connect to SMTP server
-	conn, err := smtp.Dial(addr)
+	dialer := &net.Dialer{Timeout: 15 * time.Second}
+	netConn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return fmt.Errorf("smtp dial: %w", err)
 	}
+	conn, err := smtp.NewClient(netConn, cfg.Host)
+	if err != nil {
+		_ = netConn.Close()
+		return fmt.Errorf("smtp client: %w", err)
+	}
+	_ = netConn.SetDeadline(time.Now().Add(30 * time.Second))
 	defer conn.Close()
 
 	// STARTTLS
@@ -34,6 +50,8 @@ func Send(cfg SMTPConfig, to, subject, body string) error {
 		if err = conn.StartTLS(tlsConfig); err != nil {
 			return fmt.Errorf("starttls: %w", err)
 		}
+	} else if os.Getenv("SMTP_ALLOW_INSECURE") != "1" {
+		return fmt.Errorf("smtp server does not support STARTTLS")
 	}
 
 	// Auth
@@ -45,7 +63,7 @@ func Send(cfg SMTPConfig, to, subject, body string) error {
 	}
 
 	// From
-	if err = conn.Mail(cfg.User); err != nil {
+	if err = conn.Mail(cfg.From); err != nil {
 		return fmt.Errorf("mail from: %w", err)
 	}
 

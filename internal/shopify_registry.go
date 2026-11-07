@@ -11,18 +11,21 @@ import (
 
 type ShopifyClientRegistry struct {
 	clients           map[string]*ShopifyClient
+	webhookSecrets    *ShopifyWebhookSecrets
 	defaultAPIVersion string
 }
 
 type shopifyStoreEnvConfig struct {
-	AccessToken string `json:"access_token"`
-	ClientID    string `json:"client_id"`
-	APIVersion  string `json:"api_version"`
+	AccessToken   string `json:"access_token"`
+	ClientID      string `json:"client_id"`
+	APIVersion    string `json:"api_version"`
+	WebhookSecret string `json:"webhook_secret"`
 }
 
 func NewShopifyClientRegistry(defaultAPIVersion string) *ShopifyClientRegistry {
 	return &ShopifyClientRegistry{
 		clients:           make(map[string]*ShopifyClient),
+		webhookSecrets:    NewShopifyWebhookSecrets(),
 		defaultAPIVersion: strings.TrimSpace(defaultAPIVersion),
 	}
 }
@@ -64,9 +67,17 @@ func NewShopifyClientRegistryFromEnv() (*ShopifyClientRegistry, error) {
 			client.ClientID = strings.TrimSpace(cfg.ClientID)
 		}
 		registry.Register(client)
+		registry.webhookSecrets.Register(normalizedDomain, cfg.WebhookSecret)
 	}
 
 	return registry, nil
+}
+
+func (r *ShopifyClientRegistry) WebhookSecrets() *ShopifyWebhookSecrets {
+	if r == nil {
+		return nil
+	}
+	return r.webhookSecrets
 }
 
 func (r *ShopifyClientRegistry) Register(client *ShopifyClient) {
@@ -126,4 +137,9 @@ func registerStoreFromEnv(registry *ShopifyClientRegistry, domainEnv, tokenEnv, 
 		client.ClientID = strings.TrimSpace(os.Getenv(clientIDEnv))
 	}
 	registry.Register(client)
+	secretEnv := "SHOPIFY_WEBHOOK_SECRET"
+	if strings.HasSuffix(domainEnv, "2") {
+		secretEnv = "SHOPIFY_WEBHOOK_SECRET2"
+	}
+	registry.webhookSecrets.Register(domain, os.Getenv(secretEnv))
 }

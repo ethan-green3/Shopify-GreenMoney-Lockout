@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"math/big"
 	"net/http"
 	"strings"
 	"time"
@@ -41,6 +43,162 @@ type shopifyTransaction struct {
 	Amount   string `json:"amount"`             // e.g. "129.99"
 	Currency string `json:"currency,omitempty"` // e.g. "USD"
 	Gateway  string `json:"gateway,omitempty"`  // e.g. "Green Money"
+}
+
+type shopifyGraphQLOrder struct {
+	ID                     string `json:"id"`
+	LegacyResourceID       int64  `json:"legacyResourceId"`
+	DisplayFinancialStatus string `json:"displayFinancialStatus"`
+	CanMarkAsPaid          bool   `json:"canMarkAsPaid"`
+	FullyPaid              bool   `json:"fullyPaid"`
+	TotalOutstandingSet    struct {
+		ShopMoney struct {
+			Amount       string `json:"amount"`
+			CurrencyCode string `json:"currencyCode"`
+		} `json:"shopMoney"`
+	} `json:"totalOutstandingSet"`
+	Transactions struct {
+		Nodes []struct {
+			ID                   string `json:"id"`
+			Kind                 string `json:"kind"`
+			Status               string `json:"status"`
+			Gateway              string `json:"gateway"`
+			ManualPaymentGateway bool   `json:"manualPaymentGateway"`
+			AmountSet            struct {
+				ShopMoney struct {
+					Amount       string `json:"amount"`
+					CurrencyCode string `json:"currencyCode"`
+				} `json:"shopMoney"`
+			} `json:"amountSet"`
+		} `json:"nodes"`
+	} `json:"transactions"`
+}
+
+type shopifyGraphQLResponse struct {
+	Data struct {
+		Order      shopifyGraphQLOrder `json:"order"`
+		UserErrors []struct {
+			Message string `json:"message"`
+		} `json:"userErrors"`
+	} `json:"data"`
+	Errors []struct {
+		Message string `json:"message"`
+	} `json:"errors"`
+}
+
+func (c *ShopifyClient) EnsureOrderPaid(ctx context.Context, orderID int64, expectedAmount, currency string) error {
+	_, err := c.ensureOrderPaid(ctx, orderID, expectedAmount, currency)
+	return err
+}
+
+func (c *ShopifyClient) EnsureOrderPaidWithTransaction(ctx context.Context, orderID int64, expectedAmount, currency string) (string, error) {
+	return c.ensureOrderPaid(ctx, orderID, expectedAmount, currency)
+}
+
+func (c *ShopifyClient) ensureOrderPaid(ctx context.Context, orderID int64, expectedAmount, currency string) (string, error) {
+	gid := fmt.Sprintf("gid://shopify/Order/%d", orderID)
+	query := `query($id: ID!) { order(id: $id) { id legacyResourceId displayFinancialStatus canMarkAsPaid fullyPaid totalOutstandingSet { shopMoney { amount currencyCode } } transactions(first: 250) { nodes { id kind status gateway manualPaymentGateway amountSet { shopMoney { amount currencyCode } } } } } }`
+	var pre struct {
+		Data struct {
+			Order shopifyGraphQLOrder `json:"order"`
+		} `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := c.graphQL(ctx, query, map[string]any{"id": gid}, &pre); err != nil {
+		return "", err
+	}
+	o := pre.Data.Order
+	if o.ID == "" || o.LegacyResourceID != orderID {
+		return "", fmt.Errorf("Shopify order identity mismatch")
+	}
+	if strings.EqualFold(o.DisplayFinancialStatus, "PAID") || o.FullyPaid {
+		return "", fmt.Errorf("Shopify order already paid without attributable Burner transaction")
+	}
+	if !strings.EqualFold(o.TotalOutstandingSet.ShopMoney.CurrencyCode, currency) || !moneyEqual(o.TotalOutstandingSet.ShopMoney.Amount, expectedAmount) || !o.CanMarkAsPaid {
+		return "", fmt.Errorf("Shopify order is not safely markable as paid")
+	}
+	mutation := `mutation($input: OrderMarkAsPaidInput!) { orderMarkAsPaid(input: $input) { userErrors { message } order { id legacyResourceId displayFinancialStatus fullyPaid totalOutstandingSet { shopMoney { amount currencyCode } } transactions(first: 250) { nodes { id kind status gateway manualPaymentGateway amountSet { shopMoney { amount currencyCode } } } } } } }`
+	var out struct {
+		Data struct {
+			Order      shopifyGraphQLOrder `json:"order"`
+			UserErrors []struct {
+				Message string `json:"message"`
+			} `json:"userErrors"`
+		} `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := c.graphQL(ctx, mutation, map[string]any{"input": map[string]string{"id": gid}}, &out); err != nil {
+		return "", err
+	}
+	if len(out.Data.UserErrors) > 0 {
+		return "", fmt.Errorf("Shopify orderMarkAsPaid: %s", out.Data.UserErrors[0].Message)
+	}
+	a := out.Data.Order
+	if a.ID != gid || a.LegacyResourceID != orderID || !a.FullyPaid || !moneyEqual(a.TotalOutstandingSet.ShopMoney.Amount, "0") {
+		return "", fmt.Errorf("Shopify paid postflight failed")
+	}
+	var transactionID string
+	for _, tx := range a.Transactions.Nodes {
+		if strings.EqualFold(tx.Status, "SUCCESS") && tx.ManualPaymentGateway && moneyEqual(tx.AmountSet.ShopMoney.Amount, expectedAmount) && strings.EqualFold(tx.AmountSet.ShopMoney.CurrencyCode, currency) {
+			if transactionID != "" {
+				return "", fmt.Errorf("multiple matching Shopify paid transactions")
+			}
+			transactionID = tx.ID
+			break
+		}
+	}
+	if transactionID == "" {
+		return "", fmt.Errorf("Shopify paid transaction could not be attributed")
+	}
+	return transactionID, nil
+}
+
+func moneyEqual(a, b string) bool {
+	ra, oka := new(big.Rat).SetString(strings.TrimSpace(a))
+	rb, okb := new(big.Rat).SetString(strings.TrimSpace(b))
+	return oka && okb && ra.Cmp(rb) == 0
+}
+
+func (c *ShopifyClient) graphQL(ctx context.Context, query string, variables map[string]any, out any) error {
+	body, _ := json.Marshal(map[string]any{"query": query, "variables": variables})
+	url := fmt.Sprintf("https://%s/admin/api/%s/graphql.json", c.StoreDomain, c.APIVersion)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if requiresShopifyClientID(c.StoreDomain) {
+		if strings.TrimSpace(c.ClientID) == "" {
+			return fmt.Errorf("Shopify client missing client ID for shop domain %s", c.StoreDomain)
+		}
+		req.SetBasicAuth(c.ClientID, c.AccessToken)
+	} else {
+		req.Header.Set("X-Shopify-Access-Token", c.AccessToken)
+	}
+	h := c.HTTPClient
+	if h == nil {
+		h = &http.Client{Timeout: 10 * time.Second}
+	}
+	resp, err := h.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("Shopify GraphQL non-2xx: %s", resp.Status)
+	}
+	if err := json.Unmarshal(raw, out); err != nil {
+		return err
+	}
+	return nil
 }
 
 // MarkOrderPaid creates a successful transaction on the order.

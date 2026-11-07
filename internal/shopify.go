@@ -56,6 +56,15 @@ func IsMoneyEUOrder(o ShopifyOrder) bool {
 	return false
 }
 
+func IsBurnerPayOrder(o ShopifyOrder) bool {
+	for _, name := range o.PaymentGatewayNames {
+		if strings.EqualFold(strings.TrimSpace(name), "Burner Pay") {
+			return true
+		}
+	}
+	return false
+}
+
 func ExtractShopDomain(r *http.Request) (string, error) {
 	shopDomain := strings.ToLower(strings.TrimSpace(r.Header.Get(ShopifyShopDomainHeader)))
 	if shopDomain == "" {

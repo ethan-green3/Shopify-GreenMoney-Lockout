@@ -2,6 +2,8 @@ package main
 
 import (
 	"Shopify-GreenMoney-Lockout/internal"
+	"Shopify-GreenMoney-Lockout/internal/burner"
+	"Shopify-GreenMoney-Lockout/internal/email"
 	"Shopify-GreenMoney-Lockout/internal/moneyeu"
 	"context"
 	"encoding/json"
@@ -10,6 +12,8 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -30,22 +34,8 @@ func main() {
 	if dbURL == "" {
 		log.Fatalf("Could not retrive DB URL from .env")
 	}
-	// Local checkout-link email is currently disabled because MoneyEU hosted
-	// checkout emails the link to the customer. Leave this SMTP wiring here as
-	// a quick re-enable path if first-party email delivery is needed again.
-	/*
-		smtp_port, err := strconv.Atoi(os.Getenv("SMTP_PORT"))
-		if err != nil {
-			log.Fatalf("Could not retrieve SMTP Port from .env")
-		}
-		smtpCfg := email.SMTPConfig{
-			Host: os.Getenv("SMTP_HOST"),
-			Port: smtp_port,
-			User: os.Getenv("SMTP_USER"),
-			Pass: os.Getenv("SMTP_PASS"),
-			From: os.Getenv("SMTP_FROM"),
-		}
-	*/
+	smtpPort, _ := strconv.Atoi(os.Getenv("SMTP_PORT"))
+	smtpCfg := email.SMTPConfig{Host: os.Getenv("SMTP_HOST"), Port: smtpPort, User: os.Getenv("SMTP_USER"), Pass: os.Getenv("SMTP_PASS"), From: os.Getenv("SMTP_FROM")}
 
 	db, err := internal.OpenDB(dbURL)
 	if err != nil {
@@ -89,6 +79,39 @@ func main() {
 	}
 
 	ctx := context.Background()
+	webhookVerifier := shopifyRegistry.WebhookSecrets()
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("SHOPIFY_WEBHOOK_ENFORCE")), "0") && strings.EqualFold(strings.TrimSpace(os.Getenv("APP_ENV")), "development") {
+		webhookVerifier = nil
+	}
+	var burnerSvc *burner.Service
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("BURNER_ENABLED")), "1") || strings.EqualFold(strings.TrimSpace(os.Getenv("BURNER_ENABLED")), "true") {
+		version := strings.TrimSpace(os.Getenv("BURNER_API_VERSION"))
+		if version == "" {
+			log.Fatal("BURNER_API_VERSION is required when Burner is enabled")
+		}
+		if strings.TrimSpace(os.Getenv("BURNER_API_KEY")) == "" || strings.TrimSpace(os.Getenv("BURNER_WEBHOOK_SECRET")) == "" {
+			log.Fatal("BURNER_API_KEY and BURNER_WEBHOOK_SECRET are required when Burner is enabled")
+		}
+		if !shopifyRegistry.WebhookSecrets().HasAny() {
+			log.Fatal("at least one Shopify webhook secret is required when Burner is enabled")
+		}
+		if smtpCfg.Host == "" || smtpCfg.Port == 0 || smtpCfg.From == "" {
+			log.Fatal("SMTP_HOST, SMTP_PORT, and SMTP_FROM are required when Burner is enabled")
+		}
+		base := os.Getenv("BURNER_BASE_URL")
+		if base == "" {
+			base = "https://merchant.burner.pro"
+		}
+		if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(base)), "https://") && os.Getenv("BURNER_ALLOW_INSECURE_HTTP") != "1" {
+			log.Fatal("BURNER_BASE_URL must use HTTPS")
+		}
+		checkout := os.Getenv("BURNER_CHECKOUT_BASE_URL")
+		if checkout == "" {
+			checkout = "https://pay.burner.pro"
+		}
+		burnerSvc = &burner.Service{Store: &burner.Store{DB: db}, Client: &burner.Client{BaseURL: base, APIKey: os.Getenv("BURNER_API_KEY"), APIVersion: version}, CheckoutBaseURL: checkout, Email: burnerEmailSender{cfg: smtpCfg}, Shopify: burnerShopifyResolver{registry: shopifyRegistry}}
+		go burnerSvc.Run(ctx)
+	}
 	internal.StartGreenPoller(ctx, db, greenClient, shopifyRegistry, 1*time.Minute)
 
 	/*
@@ -109,9 +132,16 @@ func main() {
 
 	mux.HandleFunc("/webhooks/moneyeu", moneyeu.MoneyEUWebhookHandler(db, moneyeuShopifyResolver{registry: shopifyRegistry}))
 
-	mux.HandleFunc("/webhooks/shopify/orders-create", internal.ShopifyOrderCreateHandler(db, greenClient, moneySvc))
+	if burnerSvc != nil {
+		mux.HandleFunc("/webhooks/shopify/orders-create", internal.ShopifyOrderCreateHandlerWithBurner(db, greenClient, moneySvc, burnerSvc, webhookVerifier))
+	} else {
+		mux.HandleFunc("/webhooks/shopify/orders-create", internal.ShopifyOrderCreateHandlerWithAuth(db, greenClient, moneySvc, webhookVerifier))
+	}
+	if burnerSvc != nil {
+		mux.HandleFunc("/webhooks/burner", burner.WebhookHandler(burnerSvc.Store, os.Getenv("BURNER_WEBHOOK_SECRET"), time.Now))
+	}
 
-	mux.HandleFunc("/green/ipn", internal.GreenIPNHandler(db, shopifyRegistry, greenClient))
+	mux.HandleFunc("/green/ipn", internal.GreenIPNHandlerSafe(db, shopifyRegistry, greenClient))
 
 	mux.HandleFunc("/debug/green/unseen", func(w http.ResponseWriter, r *http.Request) {
 		res, err := greenClient.UnseenNotifications(r.Context())

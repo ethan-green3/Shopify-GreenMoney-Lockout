@@ -7,11 +7,9 @@ import (
 	"encoding/json"
 	"io"
 	"log"
-	"log/slog"
 	"net/http"
+	"os"
 	"strings"
-
-	"github.com/lmittmann/tint"
 )
 
 type ShopifyPayer interface {
@@ -121,7 +119,7 @@ func MoneyEUWebhookHandler(db *sql.DB, shopifyResolver ShopifyResolver) http.Han
 			return
 		}
 
-		log.Printf("MoneyEU webhook received: %s", string(raw))
+		log.Printf("MoneyEU webhook received: method=%s bytes=%d", r.Method, len(raw))
 
 		item, message, ok := parseMoneyEUWebhook(raw)
 		if !ok || item.LookupID() == "" {
@@ -155,57 +153,74 @@ func MoneyEUWebhookHandler(db *sql.DB, shopifyResolver ShopifyResolver) http.Han
 		_ = StoreMoneyEUWebhookEvent(db, shopDomain, shopifyOrderID, status, raw)
 
 		if isPaidStatus(status) {
-			alreadyPaid, err := IsMoneyEUShopifyMarkedPaid(db, shopDomain, shopifyOrderID)
-			if err != nil {
-				log.Printf("check paid error: %v", err)
+			if os.Getenv("APP_ENV") == "development" && os.Getenv("MONEYEU_ALLOW_UNSIGNED_WEBHOOKS") == "1" {
+				if err := markPaidForDevelopment(db, shopifyResolver, r, shopDomain, shopifyOrderID); err != nil {
+					log.Printf("MoneyEU development callback error: %v", err)
+				}
 				w.WriteHeader(http.StatusOK)
-				w.Write([]byte("ok"))
+				_, _ = w.Write([]byte("ok"))
 				return
 			}
-
-			if alreadyPaid {
-				log.Printf("MoneyEU order %s already marked paid", shopifyOrderID)
-				w.WriteHeader(http.StatusOK)
-				w.Write([]byte("ok"))
-				return
-			}
-
-			paymentInfo, err := GetMoneyEUShopifyPaymentInfo(db, shopDomain, shopifyOrderID)
-			if err != nil {
-				log.Printf("lookup error: %v", err)
-				w.WriteHeader(http.StatusOK)
-				w.Write([]byte("ok"))
-				return
-			}
-
-			shopify, err := shopifyResolver.ForShopDomain(paymentInfo.ShopDomain)
-			if err != nil {
-				log.Printf("Shopify client lookup error: %v", err)
-				w.WriteHeader(http.StatusOK)
-				w.Write([]byte("ok"))
-				return
-			}
-
-			if err := shopify.MarkOrderPaid(r.Context(), paymentInfo.ShopifyNumericID, paymentInfo.AmountStr, paymentInfo.Currency); err != nil {
-				log.Printf("Shopify mark paid error: %v", err)
-				w.WriteHeader(http.StatusOK)
-				w.Write([]byte("ok"))
-				return
-			}
-
-			_ = MarkMoneyEUShopifyPaid(db, shopDomain, shopifyOrderID)
-
-			slog.Info(
-				"Shopify order marked paid",
-				tint.Attr(10, slog.String("status", "paid")),
-				slog.String("processor", "MoneyEU"),
-				slog.String("shop_domain", shopDomain),
-				slog.String("shopify_order_id", shopifyOrderID),
-			)
-
+			// MoneyEU does not currently document an authenticated inbound
+			// callback that this service can verify. Treat paid callbacks as
+			// reconciliation hints only; they must not authorize Shopify paid.
+			log.Printf("MoneyEU paid callback requires provider verification; recording status only for shop=%s order=%s", shopDomain, shopifyOrderID)
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("ok"))
+			_, _ = w.Write([]byte("awaiting_verification"))
 			return
+			/*
+				alreadyPaid, err := IsMoneyEUShopifyMarkedPaid(db, shopDomain, shopifyOrderID)
+				if err != nil {
+					log.Printf("check paid error: %v", err)
+					w.WriteHeader(http.StatusOK)
+					w.Write([]byte("ok"))
+					return
+				}
+
+				if alreadyPaid {
+					log.Printf("MoneyEU order %s already marked paid", shopifyOrderID)
+					w.WriteHeader(http.StatusOK)
+					w.Write([]byte("ok"))
+					return
+				}
+
+				paymentInfo, err := GetMoneyEUShopifyPaymentInfo(db, shopDomain, shopifyOrderID)
+				if err != nil {
+					log.Printf("lookup error: %v", err)
+					w.WriteHeader(http.StatusOK)
+					w.Write([]byte("ok"))
+					return
+				}
+
+				shopify, err := shopifyResolver.ForShopDomain(paymentInfo.ShopDomain)
+				if err != nil {
+					log.Printf("Shopify client lookup error: %v", err)
+					w.WriteHeader(http.StatusOK)
+					w.Write([]byte("ok"))
+					return
+				}
+
+				if err := shopify.MarkOrderPaid(r.Context(), paymentInfo.ShopifyNumericID, paymentInfo.AmountStr, paymentInfo.Currency); err != nil {
+					log.Printf("Shopify mark paid error: %v", err)
+					w.WriteHeader(http.StatusOK)
+					w.Write([]byte("ok"))
+					return
+				}
+
+				_ = MarkMoneyEUShopifyPaid(db, shopDomain, shopifyOrderID)
+
+				slog.Info(
+					"Shopify order marked paid",
+					tint.Attr(10, slog.String("status", "paid")),
+					slog.String("processor", "MoneyEU"),
+					slog.String("shop_domain", shopDomain),
+					slog.String("shopify_order_id", shopifyOrderID),
+				)
+
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte("ok"))
+				return
+			*/
 		}
 
 		if isFailedStatus(status) {
@@ -231,6 +246,25 @@ func MoneyEUWebhookHandler(db *sql.DB, shopifyResolver ShopifyResolver) http.Han
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
 	}
+}
+
+func markPaidForDevelopment(db *sql.DB, shopifyResolver ShopifyResolver, r *http.Request, shopDomain, shopifyOrderID string) error {
+	alreadyPaid, err := IsMoneyEUShopifyMarkedPaid(db, shopDomain, shopifyOrderID)
+	if err != nil || alreadyPaid {
+		return err
+	}
+	paymentInfo, err := GetMoneyEUShopifyPaymentInfo(db, shopDomain, shopifyOrderID)
+	if err != nil {
+		return err
+	}
+	shopify, err := shopifyResolver.ForShopDomain(paymentInfo.ShopDomain)
+	if err != nil {
+		return err
+	}
+	if err := shopify.MarkOrderPaid(r.Context(), paymentInfo.ShopifyNumericID, paymentInfo.AmountStr, paymentInfo.Currency); err != nil {
+		return err
+	}
+	return MarkMoneyEUShopifyPaid(db, shopDomain, shopifyOrderID)
 }
 
 func parseMoneyEUWebhook(raw []byte) (webhookContentItem, string, bool) {

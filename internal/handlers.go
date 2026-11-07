@@ -16,6 +16,13 @@ import (
 // it will decide if the order is a GreenMoney or MoneyEU order and take the corresponding path
 // if it is neither, it simply ignores
 func ShopifyOrderCreateHandler(db *sql.DB, green *GreenClient, moneySvc *moneyeu.Service) http.HandlerFunc {
+	return ShopifyOrderCreateHandlerWithAuth(db, green, moneySvc, nil)
+}
+
+// ShopifyOrderCreateHandlerWithAuth is the production handler. The legacy
+// wrapper above remains available to focused unit tests and local callers that
+// deliberately provide no verifier.
+func ShopifyOrderCreateHandlerWithAuth(db *sql.DB, green *GreenClient, moneySvc *moneyeu.Service, verifier *ShopifyWebhookSecrets) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -30,6 +37,17 @@ func ShopifyOrderCreateHandler(db *sql.DB, green *GreenClient, moneySvc *moneyeu
 			log.Printf("Shopify webhook: read body error: %v", err)
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
+		}
+		if verifier != nil {
+			if topic := strings.TrimSpace(r.Header.Get("X-Shopify-Topic")); topic != "orders/create" {
+				http.Error(w, "unexpected topic", http.StatusBadRequest)
+				return
+			}
+			if err := verifier.Verify(r, raw); err != nil {
+				log.Printf("Shopify webhook authentication failed: %v", err)
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
 		}
 
 		var order ShopifyOrder
@@ -135,6 +153,16 @@ func ShopifyOrderCreateHandler(db *sql.DB, green *GreenClient, moneySvc *moneyeu
 //
 //	GET /green/ipn?ChkID=123&TransID=456
 func GreenIPNHandler(db *sql.DB, shopifyRegistry *ShopifyClientRegistry, green *GreenClient) http.HandlerFunc {
+	return greenIPNHandler(db, shopifyRegistry, green, false)
+}
+
+// GreenIPNHandlerSafe treats IPN as a reconciliation hint only. It never
+// marks Shopify paid directly and fails closed when Green cannot be queried.
+func GreenIPNHandlerSafe(db *sql.DB, shopifyRegistry *ShopifyClientRegistry, green *GreenClient) http.HandlerFunc {
+	return greenIPNHandler(db, shopifyRegistry, green, true)
+}
+
+func greenIPNHandler(db *sql.DB, shopifyRegistry *ShopifyClientRegistry, green *GreenClient, requireVerification bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		chkID := r.URL.Query().Get("ChkID")
 		transID := r.URL.Query().Get("TransID")
@@ -152,6 +180,10 @@ func GreenIPNHandler(db *sql.DB, shopifyRegistry *ShopifyClientRegistry, green *
 			cs, err := green.CheckStatus(r.Context(), chkID)
 			if err != nil {
 				log.Printf("Green CheckStatus error for ChkID=%s: %v", chkID, err)
+				if requireVerification {
+					http.Error(w, "Green verification unavailable", http.StatusBadGateway)
+					return
+				}
 				// You can choose to bail out here; for now we log and continue,
 				// assuming Green only calls IPN when the transaction is completed.
 			} else {
@@ -173,9 +205,26 @@ func GreenIPNHandler(db *sql.DB, shopifyRegistry *ShopifyClientRegistry, green *
 					w.Write([]byte("not_processed"))
 					return
 				}
+				if requireVerification {
+					if _, err := db.Exec(`
+						UPDATE green_payments
+						SET current_status='processed_pending_lag', processed_at=COALESCE(processed_at, NOW()), updated_at=NOW(), last_status_at=NOW()
+						WHERE green_check_id=$1 AND shopify_marked_paid_at IS NULL
+					`, chkID); err != nil {
+						http.Error(w, "failed to record Green processing", http.StatusInternalServerError)
+						return
+					}
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte("processed_pending_lag"))
+					return
+				}
 			}
 		} else {
 			log.Printf("Green client not configured; skipping CheckStatus verification")
+			if requireVerification {
+				http.Error(w, "Green verification unavailable", http.StatusBadGateway)
+				return
+			}
 		}
 
 		// 2) Look up the payment row by Check_ID (ChkID)

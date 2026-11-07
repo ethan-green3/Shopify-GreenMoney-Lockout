@@ -61,6 +61,8 @@ func TestParseMoneyEUWebhookCamelCaseOrderIDExtWithStringTransactionID(t *testin
 }
 
 func TestMoneyEUWebhookHandlerPaidFlowUsesShopScopedLookup(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("MONEYEU_ALLOW_UNSIGNED_WEBHOOKS", "1")
 	db, state, err := testsql.Open([]testsql.Expectation{
 		{
 			Kind:          "query",
@@ -206,6 +208,8 @@ func TestMoneyEUWebhookHandlerProcessFlowStoresEventOnly(t *testing.T) {
 }
 
 func TestMoneyEUWebhookHandlerNestedOrderIDFallback(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("MONEYEU_ALLOW_UNSIGNED_WEBHOOKS", "1")
 	body := []byte(`{"success":true,"message":"Payment processed successfully","data":{"orderId":"ORD-987","transactionStatus":"PAID"}}`)
 	db, state, err := testsql.Open([]testsql.Expectation{
 		{
